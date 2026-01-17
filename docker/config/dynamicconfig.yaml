@@ -1,0 +1,269 @@
+# Dynamic configuration for Temporal DSQL on ECS
+# This file contains runtime configuration optimized for production benchmarking
+# Infrastructure: 6 × m7g.xlarge EC2, 4096 shards, 3-node OpenSearch
+
+# =============================================================================
+# DSQL-Specific Settings
+# =============================================================================
+
+# Enable DSQL mode for optimistic concurrency control handling
+persistence.enableDSQLMode:
+  - value: true
+    constraints: {}
+
+# DSQL optimizations - higher QPS for production workloads
+# With 4 history replicas and 4096 shards, we need higher throughput
+history.persistenceMaxQPS:
+  - value: 9000
+    constraints: {}
+
+matching.persistenceMaxQPS:
+  - value: 9000
+    constraints: {}
+
+frontend.persistenceMaxQPS:
+  - value: 9000
+    constraints: {}
+
+# DSQL connection pool settings (per service instance)
+# 4 history × 50 conns = 200 total history connections
+# Total across all services: ~400-500 connections to DSQL
+persistence.maxConns:
+  - value: 50
+    constraints: {}
+
+persistence.maxIdleConns:
+  - value: 25
+    constraints: {}
+
+# DSQL transaction size limit (4MB)
+persistence.transactionSizeLimit:
+  - value: 4000000
+    constraints: {}
+
+# DSQL connection health check
+persistence.healthCheckInterval:
+  - value: 30s
+    constraints: {}
+
+# =============================================================================
+# Advanced Visibility (OpenSearch) Settings
+# =============================================================================
+
+system.advancedVisibilityWritingMode:
+  - value: "on"
+    constraints: {}
+
+system.enableReadFromClosedExecutionV2:
+  - value: true
+    constraints: {}
+
+system.enableReadVisibilityFromES:
+  - value: true
+    constraints: {}
+
+# OpenSearch bulk processor settings for high throughput
+# 3-node m6g.large cluster can handle higher batch sizes
+visibility.maxPageSize:
+  - value: 1000
+    constraints: {}
+
+# Force refresh search attributes cache on read
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+# =============================================================================
+# History Service Settings
+# =============================================================================
+
+# Higher buffer for 4096 shards
+history.maxBufferedQueryCount:
+  - value: 2000
+    constraints: {}
+
+# Timer processor settings - increased for production
+history.timerProcessorMaxPollRPS:
+  - value: 100
+    constraints: {}
+
+history.timerProcessorUpdateAckInterval:
+  - value: 10s
+    constraints: {}
+
+# Transfer processor settings
+history.transferProcessorMaxPollRPS:
+  - value: 100
+    constraints: {}
+
+# Replication settings
+history.replicationTaskProcessorMaxPollRPS:
+  - value: 100
+    constraints: {}
+
+# Cache settings for high shard count
+history.historyCacheMaxSize:
+  - value: 512
+    constraints: {}
+
+history.historyShardControllerMaxConcurrentAcquires:
+  - value: 10
+    constraints: {}
+
+# Default activity retry policy
+history.defaultActivityRetryPolicy:
+  - value:
+      InitialIntervalInSeconds: 1
+      MaximumIntervalInSeconds: 100
+      BackoffCoefficient: 2.0
+      MaximumAttempts: 0
+    constraints: {}
+
+# =============================================================================
+# Matching Service Settings
+# =============================================================================
+
+# Task queue partitions - increased for production throughput
+# More partitions = better parallelism for high-volume task queues
+matching.numTaskqueueWritePartitions:
+  - value: 16
+    constraints: {}
+
+matching.numTaskqueueReadPartitions:
+  - value: 16
+    constraints: {}
+
+# Matching service throughput settings
+matching.maxTaskBatchSize:
+  - value: 100
+    constraints: {}
+
+matching.getTasksBatchSize:
+  - value: 1000
+    constraints: {}
+
+matching.longPollExpirationInterval:
+  - value: 60s
+    constraints: {}
+
+# Forwarder settings for multi-partition task queues
+matching.forwarderMaxOutstandingPolls:
+  - value: 10
+    constraints: {}
+
+matching.forwarderMaxOutstandingTasks:
+  - value: 100
+    constraints: {}
+
+matching.forwarderMaxRatePerSecond:
+  - value: 100
+    constraints: {}
+
+# =============================================================================
+# Frontend Service Settings
+# =============================================================================
+
+frontend.enableClientVersionCheck:
+  - value: true
+    constraints: {}
+
+# Rate limiting - higher for production
+frontend.rps:
+  - value: 2400
+    constraints: {}
+
+frontend.namespaceRPS:
+  - value: 2400
+    constraints: {}
+
+frontend.namespaceCount:
+  - value: 1200
+    constraints: {}
+
+# Visibility rate limits
+frontend.visibilityMaxPageSize:
+  - value: 1000
+    constraints: {}
+
+# =============================================================================
+# Worker Service Settings
+# =============================================================================
+
+worker.enableBatcher:
+  - value: true
+    constraints: {}
+
+worker.enableLogging:
+  - value: true
+    constraints: {}
+
+# Scanner settings
+worker.scannerMaxConcurrentActivityExecutionSize:
+  - value: 10
+    constraints: {}
+
+worker.scannerMaxConcurrentWorkflowTaskExecutionSize:
+  - value: 10
+    constraints: {}
+
+# =============================================================================
+# Cluster Membership Settings
+# =============================================================================
+
+# Increased for ECS startup with multiple replicas
+system.membershipMaxJoinDuration:
+  - value: 120s
+    constraints: {}
+
+# =============================================================================
+# System Settings
+# =============================================================================
+
+system.enableParentClosePolicy:
+  - value: true
+    constraints: {}
+
+system.enableNamespaceNotActiveAutoForwarding:
+  - value: true
+    constraints: {}
+
+system.enableLogCustomerQueryParameter:
+  - value: true
+    constraints: {}
+
+# Rate limiting for logs
+system.enableLoggerRateLimiting:
+  - value: true
+    constraints: {}
+
+# =============================================================================
+# Archival Settings
+# =============================================================================
+
+archival.history.enableRead:
+  - value: true
+    constraints: {}
+
+archival.visibility.enableRead:
+  - value: true
+    constraints: {}
+
+# =============================================================================
+# Nexus Settings - DISABLED for DSQL compatibility
+# =============================================================================
+
+system.enableNexus:
+  - value: false
+    constraints: {}
+
+frontend.enableNexusAPIs:
+  - value: false
+    constraints: {}
+
+worker.enableNexus:
+  - value: false
+    constraints: {}
+
+system.nexusEndpointRegistryEnabled:
+  - value: false
+    constraints: {}

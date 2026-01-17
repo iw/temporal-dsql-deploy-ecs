@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../temporal-dsql-deploy"
+		},
+		{
+			"path": "../temporal-dsql"
+		},
+		{
+			"path": "../aurora-dsql-samples"
+		}
+	],
+	"settings": {
+		"kiroAgent.configureMCP": "Disabled"
+	}
+}

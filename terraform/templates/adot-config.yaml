@@ -1,0 +1,118 @@
+# -----------------------------------------------------------------------------
+# ADOT Collector Configuration for Temporal Metrics
+# -----------------------------------------------------------------------------
+# This configuration scrapes Prometheus metrics from all Temporal services
+# and benchmark runners via Service Connect DNS names and remote writes to
+# Amazon Managed Prometheus.
+# -----------------------------------------------------------------------------
+
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'frontend'
+          scrape_interval: 15s
+          scrape_timeout: 10s
+          static_configs:
+            - targets: ['temporal-frontend-metrics:9090']
+              labels:
+                service: frontend
+          metric_relabel_configs:
+            - source_labels: []
+              target_label: service_name
+              replacement: frontend
+
+        - job_name: 'history'
+          scrape_interval: 15s
+          scrape_timeout: 10s
+          static_configs:
+            - targets: ['temporal-history-metrics:9090']
+              labels:
+                service: history
+          metric_relabel_configs:
+            - source_labels: []
+              target_label: service_name
+              replacement: history
+
+        - job_name: 'matching'
+          scrape_interval: 15s
+          scrape_timeout: 10s
+          static_configs:
+            - targets: ['temporal-matching-metrics:9090']
+              labels:
+                service: matching
+          metric_relabel_configs:
+            - source_labels: []
+              target_label: service_name
+              replacement: matching
+
+        - job_name: 'worker'
+          scrape_interval: 15s
+          scrape_timeout: 10s
+          static_configs:
+            - targets: ['temporal-worker-metrics:9090']
+              labels:
+                service: worker
+          metric_relabel_configs:
+            - source_labels: []
+              target_label: service_name
+              replacement: worker
+
+        # ---------------------------------------------------------------------
+        # Benchmark Runner Metrics
+        # ---------------------------------------------------------------------
+        # Scrapes Prometheus metrics from benchmark runner tasks.
+        # The benchmark runner is a one-shot ECS task that exposes SDK metrics
+        # on port 9090 including:
+        # - temporal_request_latency: Latency for all Temporal API calls
+        # - temporal_workflow_task_schedule_to_start_latency
+        # - temporal_activity_task_schedule_to_start_latency
+        # - temporal_workflow_endtoend_latency
+        # - temporal_long_request: Requests exceeding thresholds
+        # - temporal_request_failure: Failures with type labels
+        # - Custom benchmark metrics (workflow latency, throughput)
+        #
+        # Uses ECS service discovery to find running benchmark tasks.
+        # Requirements: 3.1.8
+        # ---------------------------------------------------------------------
+        - job_name: 'benchmark'
+          scrape_interval: 15s
+          scrape_timeout: 10s
+          ec2_sd_configs:
+            - region: "${aws_region}"
+              port: 9090
+              filters:
+                - name: "tag:workload"
+                  values: ["benchmark"]
+          relabel_configs:
+            # Only scrape instances with the benchmark workload tag
+            - source_labels: [__meta_ec2_tag_workload]
+              regex: benchmark
+              action: keep
+            # Add service label for consistency with other jobs
+            - target_label: service
+              replacement: benchmark
+            # Add instance ID for debugging
+            - source_labels: [__meta_ec2_instance_id]
+              target_label: instance_id
+            # Add availability zone for debugging
+            - source_labels: [__meta_ec2_availability_zone]
+              target_label: availability_zone
+
+exporters:
+  prometheusremotewrite:
+    endpoint: "${amp_remote_write_endpoint}"
+    auth:
+      authenticator: sigv4auth
+
+extensions:
+  sigv4auth:
+    region: "${aws_region}"
+    service: "aps"
+
+service:
+  extensions: [sigv4auth]
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      exporters: [prometheusremotewrite]

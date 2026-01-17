@@ -1,0 +1,157 @@
+# -----------------------------------------------------------------------------
+# Temporal ECS Fargate Deployment - Example Configuration
+# -----------------------------------------------------------------------------
+# Copy this file to terraform.tfvars and update with your values.
+# Required variables are marked with (REQUIRED).
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# General Configuration
+# -----------------------------------------------------------------------------
+
+# Project name used for resource naming
+project_name = "temporal-dev"
+
+# AWS region for deployment
+region = "eu-west-1"
+
+# -----------------------------------------------------------------------------
+# VPC Configuration
+# -----------------------------------------------------------------------------
+
+# CIDR block for VPC (must be a valid CIDR block)
+vpc_cidr = "10.0.0.0/16"
+
+# Availability zones for subnet distribution (minimum 2 required)
+availability_zones = ["eu-west-1a", "eu-west-1b"]
+
+# -----------------------------------------------------------------------------
+# Temporal Image Configuration (REQUIRED)
+# -----------------------------------------------------------------------------
+
+# Custom Temporal runtime Docker image URI (must be ARM64 compatible)
+# This is the RUNTIME image that includes config rendering and entrypoint script.
+# Built by: ./scripts/build-and-push-ecr.sh (Step 6 creates this image)
+# Example: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-dsql-runtime:latest"
+temporal_image = "YOUR_ECR_REPO/temporal-dsql-runtime:latest"
+
+# Custom Temporal admin-tools Docker image URI (must be ARM64 compatible)
+# Contains temporal-elasticsearch-tool for OpenSearch schema setup
+# Built by: ./scripts/build-and-push-ecr.sh (Step 5 creates this image)
+# Example: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-dsql-admin-tools:latest"
+temporal_admin_tools_image = "YOUR_ECR_REPO/temporal-dsql-admin-tools:latest"
+
+# -----------------------------------------------------------------------------
+# Temporal Service Resource Configuration
+# -----------------------------------------------------------------------------
+# CPU values: 256, 512, 1024, 2048, 4096
+# Memory values: 512-30720 MB (must be compatible with CPU)
+# Task count: defaults to 0 (scale up after schema setup with ./scripts/scale-services.sh up)
+
+# History Service
+temporal_history_cpu    = 512   # CPU units (256, 512, 1024, 2048, 4096)
+temporal_history_memory = 1024  # Memory in MB (512-30720)
+# temporal_history_count  = 0   # Default: 0 (scale up after schema setup)
+
+# Matching Service
+temporal_matching_cpu    = 512
+temporal_matching_memory = 1024
+# temporal_matching_count  = 0   # Default: 0 (scale up after schema setup)
+
+# Frontend Service
+temporal_frontend_cpu    = 512
+temporal_frontend_memory = 1024
+# temporal_frontend_count  = 0   # Default: 0 (scale up after schema setup)
+
+# Worker Service
+temporal_worker_cpu    = 512
+temporal_worker_memory = 1024
+# temporal_worker_count  = 0   # Default: 0 (scale up after schema setup)
+
+# UI Service
+temporal_ui_cpu    = 256
+temporal_ui_memory = 512
+# temporal_ui_count  = 0   # Default: 0 (scale up after schema setup)
+temporal_ui_image  = "temporalio/ui:latest"
+
+# -----------------------------------------------------------------------------
+# Aurora DSQL Configuration (REQUIRED)
+# -----------------------------------------------------------------------------
+
+# Aurora DSQL cluster endpoint (created externally)
+# Format: cluster-id.dsql.region.on.aws
+# Example: "your-cluster-id.dsql.eu-west-1.on.aws"
+dsql_cluster_endpoint = "YOUR_DSQL_CLUSTER_ENDPOINT"
+
+# Aurora DSQL cluster ARN for IAM policy configuration
+# Format: arn:aws:dsql:region:account:cluster/cluster-id
+# Example: "arn:aws:dsql:eu-west-1:123456789012:cluster/your-cluster-id"
+dsql_cluster_arn = "YOUR_DSQL_CLUSTER_ARN"
+
+# -----------------------------------------------------------------------------
+# OpenSearch Configuration
+# -----------------------------------------------------------------------------
+
+# OpenSearch visibility index name
+opensearch_visibility_index = "temporal_visibility_v1_dev"
+
+# -----------------------------------------------------------------------------
+# Grafana Configuration
+# -----------------------------------------------------------------------------
+
+# Name of the Secrets Manager secret containing Grafana admin credentials
+# This secret must be created BEFORE running Terraform using:
+#
+#   PW="$(aws secretsmanager get-random-password \
+#     --password-length 32 \
+#     --exclude-punctuation \
+#     --require-each-included-type \
+#     --query RandomPassword \
+#     --output text)"
+#   echo "$PW"
+#
+#   aws secretsmanager create-secret \
+#     --name grafana/admin \
+#     --secret-string "{\"admin_user\":\"admin\",\"admin_password\":\"$PW\"}"
+#
+grafana_admin_secret_name = "grafana/admin"
+
+# Grafana service resources
+grafana_cpu    = 256
+grafana_memory = 512
+# grafana_count  = 0   # Default: 0 (scale up after schema setup)
+grafana_image  = "grafana/grafana-oss:latest"
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+
+# CloudWatch Logs retention period in days
+# Valid values: 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653
+log_retention_days = 7
+
+# -----------------------------------------------------------------------------
+# ADOT Collector Configuration
+# -----------------------------------------------------------------------------
+
+# ADOT Collector service resources
+# ADOT scrapes Prometheus metrics from all Temporal services and remote writes to AMP
+adot_cpu    = 256   # CPU units (256, 512, 1024, 2048, 4096)
+adot_memory = 512   # Memory in MB (512-30720)
+
+# -----------------------------------------------------------------------------
+# Benchmark Configuration
+# -----------------------------------------------------------------------------
+
+# Docker image URI for the benchmark runner (must be ARM64 compatible)
+# Built by: ./scripts/build-benchmark.sh
+# Example: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-benchmark:latest"
+# benchmark_image = "YOUR_ECR_REPO/temporal-benchmark:latest"
+
+# Maximum number of EC2 instances for benchmark workloads
+# Benchmark nodes scale from 0 - no instances running when idle
+# benchmark_max_instances = 4
+
+# Benchmark task resources
+# benchmark_cpu    = 1024  # CPU units (256, 512, 1024, 2048, 4096)
+# benchmark_memory = 2048  # Memory in MB (512-30720)
