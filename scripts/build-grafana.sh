@@ -2,18 +2,35 @@
 set -euo pipefail
 
 # Build and push custom Grafana image with pre-configured dashboards
-# Usage: ./scripts/build-grafana.sh [--from-terraform]
+#
+# Usage: ./scripts/build-grafana.sh [aws-region]
+#
+# Arguments:
+#   aws-region    AWS region (default: eu-west-1)
+#
+# Examples:
+#   ./scripts/build-grafana.sh
+#   ./scripts/build-grafana.sh us-east-1
+#
+# The script can also use --from-terraform to read region from Terraform outputs.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Parse arguments
 FROM_TERRAFORM=false
+AWS_REGION=""
+
 for arg in "$@"; do
     case $arg in
         --from-terraform)
             FROM_TERRAFORM=true
-            shift
+            ;;
+        *)
+            # Positional argument - treat as region
+            if [ -z "$AWS_REGION" ]; then
+                AWS_REGION="$arg"
+            fi
             ;;
     esac
 done
@@ -21,15 +38,22 @@ done
 # Get configuration
 if [ "$FROM_TERRAFORM" = true ]; then
     cd "$PROJECT_ROOT/terraform"
-    AWS_REGION=$(terraform output -raw region 2>/dev/null || echo "eu-west-1")
-    AWS_ACCOUNT_ID=$(terraform output -raw aws_account_id 2>/dev/null || aws sts get-caller-identity --query Account --output text)
-    ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    if terraform state list &>/dev/null && terraform output -json 2>/dev/null | grep -q '"region"'; then
+        AWS_REGION=$(terraform output -raw region)
+        AWS_ACCOUNT_ID=$(terraform output -raw aws_account_id 2>/dev/null || aws sts get-caller-identity --query Account --output text)
+    else
+        echo "Note: Terraform state not found or no outputs. Using defaults and AWS CLI."
+        AWS_REGION="${AWS_REGION:-eu-west-1}"
+        AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    fi
     cd "$PROJECT_ROOT"
 else
+    # Default to eu-west-1 if not specified
     AWS_REGION="${AWS_REGION:-eu-west-1}"
-    AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
-    ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 fi
+
+ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 IMAGE_NAME="temporal-grafana"
 IMAGE_TAG="${IMAGE_TAG:-latest}"

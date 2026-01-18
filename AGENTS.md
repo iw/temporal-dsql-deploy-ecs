@@ -71,6 +71,16 @@ temporal-dsql-deploy-ecs/
 │   └── setup-opensearch.sh       # Setup OpenSearch visibility index
 ├── dynamicconfig/                # Temporal dynamic configuration
 │   └── development-dsql.yaml     # DSQL-specific dynamic config
+├── grafana/                      # Custom Grafana image with dashboards
+│   ├── Dockerfile                # Grafana image with provisioned dashboards
+│   ├── entrypoint.sh             # Environment variable substitution for datasources
+│   ├── provisioning/             # Grafana provisioning configuration
+│   │   ├── dashboards/           # Dashboard provider config
+│   │   └── datasources/          # Datasource definitions (AMP, CloudWatch)
+│   ├── server/                   # Temporal Server dashboard
+│   │   └── server.json           # Service health, workflow outcomes, persistence
+│   └── dsql/                     # DSQL Persistence dashboard
+│       └── persistence.json      # Connection pool, OCC conflicts, CloudWatch metrics
 ├── .kiro/                        # Kiro spec files
 │   └── specs/
 │       ├── temporal-ecs-ec2/     # ECS deployment spec
@@ -123,6 +133,7 @@ temporal-dsql-deploy-ecs/
 | Script | Purpose |
 |--------|---------|
 | `build-and-push-ecr.sh` | Build ARM64 Temporal binaries, create ECR repos if needed, build Docker images, push to ECR (self-contained, no Terraform dependency) |
+| `build-grafana.sh` | Build and push custom Grafana image with dashboards to ECR (accepts region arg, defaults to eu-west-1) |
 | `build-benchmark.sh` | Build and push benchmark runner image to ECR |
 | `run-benchmark.sh` | Run benchmark task with configurable parameters (workflow type, rate, duration, namespace) |
 | `get-benchmark-results.sh` | Retrieve benchmark results from CloudWatch logs |

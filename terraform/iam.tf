@@ -286,6 +286,55 @@ resource "aws_iam_role_policy" "grafana_prometheus" {
   })
 }
 
+# CloudWatch read permissions for Grafana (DSQL metrics)
+resource "aws_iam_role_policy" "grafana_cloudwatch" {
+  name = "cloudwatch-read"
+  role = aws_iam_role.grafana_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "cloudwatch:DescribeAlarmsForMetric",
+        "cloudwatch:DescribeAlarmHistory",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:GetInsightRuleReport"
+      ]
+      Resource = "*"
+    },
+    {
+      Effect = "Allow"
+      Action = [
+        "logs:DescribeLogGroups",
+        "logs:GetLogGroupFields",
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "logs:GetQueryResults",
+        "logs:GetLogEvents"
+      ]
+      Resource = "*"
+    },
+    {
+      Effect = "Allow"
+      Action = [
+        "ec2:DescribeTags",
+        "ec2:DescribeInstances",
+        "ec2:DescribeRegions"
+      ]
+      Resource = "*"
+    },
+    {
+      Effect = "Allow"
+      Action = "tag:GetResources"
+      Resource = "*"
+    }]
+  })
+}
+
 # -----------------------------------------------------------------------------
 # Temporal UI Task Role
 # -----------------------------------------------------------------------------

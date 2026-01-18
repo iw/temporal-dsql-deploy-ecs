@@ -161,13 +161,16 @@ The runtime image (`temporal-dsql-runtime`) is what you should use for `temporal
 - DSQL + OpenSearch persistence configuration templates
 - An entrypoint script that renders config from environment variables
 
-### 3. Build Custom Grafana Image (Optional)
+### 3. Build Custom Grafana Image
 
 Build a custom Grafana image with pre-configured dashboards and datasources:
 
 ```bash
-# Build and push custom Grafana image to ECR
-./scripts/build-grafana.sh --from-terraform
+# Build and push custom Grafana image to ECR (defaults to eu-west-1)
+./scripts/build-grafana.sh
+
+# Or specify a different region
+./scripts/build-grafana.sh us-east-1
 ```
 
 This creates a Grafana image with:
@@ -175,7 +178,7 @@ This creates a Grafana image with:
 - CloudWatch datasource for DSQL metrics
 - Pre-loaded Temporal Server and DSQL Persistence dashboards
 
-Update `terraform.tfvars` with the image URI if using the custom image.
+Note the image URI for use in `terraform.tfvars`.
 
 ### 4. Create Aurora DSQL Cluster
 
@@ -232,6 +235,7 @@ vim terraform/terraform.tfvars
 Required variables:
 - `temporal_image`: ECR repository URL for the runtime image (`temporal-dsql-runtime:latest` from step 2)
 - `temporal_admin_tools_image`: ECR repository URL for admin tools image (`temporal-dsql-admin-tools:latest` from step 2)
+- `grafana_image`: ECR repository URL for Grafana image (`temporal-grafana:latest` from step 3)
 - `dsql_cluster_endpoint`: Aurora DSQL cluster endpoint (from step 4)
 - `dsql_cluster_arn`: Aurora DSQL cluster ARN (from step 4)
 
@@ -398,7 +402,13 @@ The deployment includes pre-configured Grafana dashboards for monitoring Tempora
 The dashboards are baked into a custom Grafana image with pre-configured datasources:
 
 ```bash
-# Build and push custom Grafana image to ECR
+# Build and push custom Grafana image to ECR (defaults to eu-west-1)
+./scripts/build-grafana.sh
+
+# Or specify a different region
+./scripts/build-grafana.sh us-east-1
+
+# Or use Terraform outputs for region (after initial deploy)
 ./scripts/build-grafana.sh --from-terraform
 
 # Update terraform.tfvars with the new image
