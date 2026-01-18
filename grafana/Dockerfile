@@ -7,7 +7,7 @@
 #   AMP_ENDPOINT - Amazon Managed Prometheus query endpoint
 #   AWS_REGION - AWS region for SigV4 auth and CloudWatch
 
-FROM grafana/grafana-oss:11.4.0
+FROM grafana/grafana-oss:latest
 
 # Copy provisioning configuration
 COPY provisioning/ /etc/grafana/provisioning/
