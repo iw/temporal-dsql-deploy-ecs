@@ -161,7 +161,23 @@ The runtime image (`temporal-dsql-runtime`) is what you should use for `temporal
 - DSQL + OpenSearch persistence configuration templates
 - An entrypoint script that renders config from environment variables
 
-### 3. Create Aurora DSQL Cluster
+### 3. Build Custom Grafana Image (Optional)
+
+Build a custom Grafana image with pre-configured dashboards and datasources:
+
+```bash
+# Build and push custom Grafana image to ECR
+./scripts/build-grafana.sh --from-terraform
+```
+
+This creates a Grafana image with:
+- Amazon Managed Prometheus datasource (SigV4 auth)
+- CloudWatch datasource for DSQL metrics
+- Pre-loaded Temporal Server and DSQL Persistence dashboards
+
+Update `terraform.tfvars` with the image URI if using the custom image.
+
+### 4. Create Aurora DSQL Cluster
 
 Create an Aurora DSQL cluster (the cluster is managed separately from this Terraform module):
 
@@ -185,12 +201,12 @@ The cluster takes a few minutes to become ACTIVE. Check status with:
 aws dsql get-cluster --identifier <cluster-id> --region eu-west-1 --query 'status'
 ```
 
-### 4. Setup DSQL Schema
+### 5. Setup DSQL Schema
 
 Setup the Temporal schema in Aurora DSQL (requires the cluster to be ACTIVE):
 
 ```bash
-# Using the endpoint from step 3
+# Using the endpoint from step 4
 ./scripts/setup-schema.sh --endpoint xxxxx.dsql.eu-west-1.on.aws
 
 # With custom options
@@ -203,7 +219,7 @@ Setup the Temporal schema in Aurora DSQL (requires the cluster to be ACTIVE):
 ./scripts/setup-schema.sh --endpoint xxxxx.dsql.eu-west-1.on.aws --overwrite
 ```
 
-### 5. Configure Terraform Variables
+### 6. Configure Terraform Variables
 
 ```bash
 # Copy example configuration
@@ -216,10 +232,10 @@ vim terraform/terraform.tfvars
 Required variables:
 - `temporal_image`: ECR repository URL for the runtime image (`temporal-dsql-runtime:latest` from step 2)
 - `temporal_admin_tools_image`: ECR repository URL for admin tools image (`temporal-dsql-admin-tools:latest` from step 2)
-- `dsql_cluster_endpoint`: Aurora DSQL cluster endpoint (from step 3)
-- `dsql_cluster_arn`: Aurora DSQL cluster ARN (from step 3)
+- `dsql_cluster_endpoint`: Aurora DSQL cluster endpoint (from step 4)
+- `dsql_cluster_arn`: Aurora DSQL cluster ARN (from step 4)
 
-### 6. Deploy Infrastructure
+### 7. Deploy Infrastructure
 
 ```bash
 cd terraform
@@ -235,7 +251,7 @@ terraform plan
 terraform apply
 ```
 
-### 7. Setup OpenSearch Schema
+### 8. Setup OpenSearch Schema
 
 After deployment, run the one-time OpenSearch schema setup. This task runs on Fargate and doesn't require EC2 instances:
 
@@ -257,7 +273,7 @@ export TEMPORAL_OPENSEARCH_HOST=$(terraform output -raw opensearch_endpoint)
 ./scripts/setup-opensearch.sh
 ```
 
-### 8. Wait for EC2 Instances
+### 9. Wait for EC2 Instances
 
 Wait for the 6 EC2 instances to register with the ECS cluster:
 
@@ -267,7 +283,7 @@ Wait for the 6 EC2 instances to register with the ECS cluster:
 
 This waits for all 6 instances to be registered before proceeding.
 
-### 9. Scale Up Services
+### 10. Scale Up Services
 
 After schema setup is complete, scale up the Temporal services:
 
@@ -357,6 +373,66 @@ aws ecs execute-command \
   --command "/bin/sh" \
   --region eu-west-1
 ```
+
+## Grafana Dashboards
+
+The deployment includes pre-configured Grafana dashboards for monitoring Temporal and DSQL:
+
+### Available Dashboards
+
+1. **Temporal Server Dashboard** (`grafana/server/server.json`)
+   - Service request rates and latencies (Frontend, History, Matching)
+   - Workflow execution outcomes
+   - History task processing
+   - Persistence latency by operation
+   - Client metrics (History, Matching clients)
+
+2. **DSQL Persistence Dashboard** (`grafana/dsql/persistence.json`)
+   - Connection pool utilization (max_open, open, in_use, idle)
+   - Transaction conflicts and retries (OCC metrics)
+   - CloudWatch metrics for DSQL cluster health
+   - DPU usage and commit latency
+
+### Building Custom Grafana Image
+
+The dashboards are baked into a custom Grafana image with pre-configured datasources:
+
+```bash
+# Build and push custom Grafana image to ECR
+./scripts/build-grafana.sh --from-terraform
+
+# Update terraform.tfvars with the new image
+# grafana_image = "<account>.dkr.ecr.<region>.amazonaws.com/temporal-grafana:latest"
+```
+
+The custom image includes:
+- Amazon Managed Prometheus datasource with SigV4 authentication
+- CloudWatch datasource for DSQL metrics
+- Pre-loaded dashboards in organized folders
+
+### Datasources
+
+| Datasource | Type | Purpose |
+|------------|------|---------|
+| Prometheus | Amazon Managed Prometheus | Temporal server metrics (via ADOT) |
+| CloudWatch | AWS CloudWatch | Aurora DSQL service metrics |
+
+### DSQL Plugin Metrics
+
+The custom DSQL plugin emits these metrics (requires `framework: opentelemetry` in Temporal config):
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `dsql_pool_max_open` | Gauge | Maximum configured connections |
+| `dsql_pool_open` | Gauge | Currently open connections |
+| `dsql_pool_in_use` | Gauge | Connections actively in use |
+| `dsql_pool_idle` | Gauge | Idle connections in pool |
+| `dsql_pool_wait_total` | Counter | Requests that waited for a connection |
+| `dsql_pool_wait_duration` | Histogram | Time spent waiting for connections |
+| `dsql_tx_conflict_total` | Counter | Transaction serialization conflicts |
+| `dsql_tx_retry_total` | Counter | Transaction retry attempts |
+| `dsql_tx_exhausted_total` | Counter | Retries exhausted (failures) |
+| `dsql_tx_latency` | Histogram | Transaction latency including retries |
 
 ## Benchmarking
 
