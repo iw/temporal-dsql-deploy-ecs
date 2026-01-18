@@ -14,8 +14,22 @@ set -eo pipefail
 #   --region REGION        AWS region (default: eu-west-1 or from terraform.tfvars)
 #   --cluster CLUSTER      ECS cluster name (default: from terraform.tfvars project_name)
 #   --count COUNT          Override all services to this count for 'up' command
+#   --wps WPS              Target workflows per second - auto-calculates replica counts and resources
+#   --apply                Update terraform.tfvars and run terraform apply (requires --wps)
 #   --from-terraform       Read cluster name and region from terraform.tfvars
 #   -h, --help             Show this help message
+#
+# WPS Presets (replica counts and CPU/memory):
+#   --wps 25   history=2 (1024/4096), matching=2 (512/2048), frontend=1 (512/2048), worker=1 (512/2048)
+#   --wps 50   history=3 (1024/4096), matching=2 (1024/4096), frontend=2 (512/2048), worker=2 (512/2048)
+#   --wps 75   history=4 (2048/8192), matching=3 (1024/4096), frontend=2 (1024/4096), worker=2 (1024/4096)
+#   --wps 100  history=5 (2048/8192), matching=4 (1024/4096), frontend=3 (1024/4096), worker=2 (1024/4096)
+#   --wps 150  history=6 (2048/8192), matching=5 (2048/8192), frontend=3 (1024/4096), worker=3 (1024/4096)
+#
+# Examples:
+#   ./scripts/scale-services.sh up --from-terraform --wps 75 --apply   # Full setup for 75 WPS
+#   ./scripts/scale-services.sh up --from-terraform --wps 75           # Scale only (no terraform)
+#   ./scripts/scale-services.sh down --from-terraform                  # Scale to 0
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -33,9 +47,11 @@ AWS_REGION="${AWS_REGION:-eu-west-1}"
 CLUSTER_NAME=""
 PROJECT_NAME=""
 OVERRIDE_COUNT=""
+TARGET_WPS=""
 FROM_TERRAFORM=false
+APPLY_TERRAFORM=false
 
-# Function to get production count for a service
+# Function to get production count for a service (default profile)
 get_service_count() {
     local service="$1"
     case "$service" in
@@ -48,6 +64,235 @@ get_service_count() {
         adot)     echo 1 ;;
         *)        echo 1 ;;
     esac
+}
+
+# Function to get replica count based on target WPS
+get_wps_count() {
+    local service="$1"
+    local wps="$2"
+    
+    # Scale based on WPS tiers
+    # These are estimates - actual capacity depends on workflow complexity
+    if [ "$wps" -le 25 ]; then
+        case "$service" in
+            history)  echo 2 ;;
+            matching) echo 2 ;;
+            frontend) echo 1 ;;
+            worker)   echo 1 ;;
+            ui)       echo 1 ;;
+            grafana)  echo 1 ;;
+            adot)     echo 1 ;;
+            *)        echo 1 ;;
+        esac
+    elif [ "$wps" -le 50 ]; then
+        case "$service" in
+            history)  echo 3 ;;
+            matching) echo 2 ;;
+            frontend) echo 2 ;;
+            worker)   echo 2 ;;
+            ui)       echo 1 ;;
+            grafana)  echo 1 ;;
+            adot)     echo 1 ;;
+            *)        echo 1 ;;
+        esac
+    elif [ "$wps" -le 75 ]; then
+        case "$service" in
+            history)  echo 4 ;;
+            matching) echo 3 ;;
+            frontend) echo 2 ;;
+            worker)   echo 2 ;;
+            ui)       echo 1 ;;
+            grafana)  echo 1 ;;
+            adot)     echo 1 ;;
+            *)        echo 1 ;;
+        esac
+    elif [ "$wps" -le 100 ]; then
+        case "$service" in
+            history)  echo 5 ;;
+            matching) echo 4 ;;
+            frontend) echo 3 ;;
+            worker)   echo 2 ;;
+            ui)       echo 1 ;;
+            grafana)  echo 1 ;;
+            adot)     echo 1 ;;
+            *)        echo 1 ;;
+        esac
+    else
+        # 150+ WPS
+        case "$service" in
+            history)  echo 6 ;;
+            matching) echo 5 ;;
+            frontend) echo 3 ;;
+            worker)   echo 3 ;;
+            ui)       echo 1 ;;
+            grafana)  echo 1 ;;
+            adot)     echo 1 ;;
+            *)        echo 1 ;;
+        esac
+    fi
+}
+
+# Function to get CPU for a service based on target WPS
+get_wps_cpu() {
+    local service="$1"
+    local wps="$2"
+    
+    if [ "$wps" -le 25 ]; then
+        case "$service" in
+            history)  echo 1024 ;;
+            matching) echo 512 ;;
+            frontend) echo 512 ;;
+            worker)   echo 512 ;;
+            *)        echo 256 ;;
+        esac
+    elif [ "$wps" -le 50 ]; then
+        case "$service" in
+            history)  echo 1024 ;;
+            matching) echo 1024 ;;
+            frontend) echo 512 ;;
+            worker)   echo 512 ;;
+            *)        echo 256 ;;
+        esac
+    elif [ "$wps" -le 100 ]; then
+        case "$service" in
+            history)  echo 2048 ;;
+            matching) echo 1024 ;;
+            frontend) echo 1024 ;;
+            worker)   echo 1024 ;;
+            *)        echo 256 ;;
+        esac
+    else
+        # 150+ WPS
+        case "$service" in
+            history)  echo 2048 ;;
+            matching) echo 2048 ;;
+            frontend) echo 1024 ;;
+            worker)   echo 1024 ;;
+            *)        echo 256 ;;
+        esac
+    fi
+}
+
+# Function to get memory for a service based on target WPS
+get_wps_memory() {
+    local service="$1"
+    local wps="$2"
+    
+    if [ "$wps" -le 25 ]; then
+        case "$service" in
+            history)  echo 4096 ;;
+            matching) echo 2048 ;;
+            frontend) echo 2048 ;;
+            worker)   echo 2048 ;;
+            *)        echo 512 ;;
+        esac
+    elif [ "$wps" -le 50 ]; then
+        case "$service" in
+            history)  echo 4096 ;;
+            matching) echo 4096 ;;
+            frontend) echo 2048 ;;
+            worker)   echo 2048 ;;
+            *)        echo 512 ;;
+        esac
+    elif [ "$wps" -le 100 ]; then
+        case "$service" in
+            history)  echo 8192 ;;
+            matching) echo 4096 ;;
+            frontend) echo 4096 ;;
+            worker)   echo 4096 ;;
+            *)        echo 512 ;;
+        esac
+    else
+        # 150+ WPS
+        case "$service" in
+            history)  echo 8192 ;;
+            matching) echo 8192 ;;
+            frontend) echo 4096 ;;
+            worker)   echo 4096 ;;
+            *)        echo 512 ;;
+        esac
+    fi
+}
+
+# Function to update terraform.tfvars with WPS-based resources
+update_tfvars_for_wps() {
+    local wps="$1"
+    local tfvars_file="terraform/terraform.tfvars"
+    
+    if [ ! -f "$tfvars_file" ]; then
+        echo -e "${RED}Error: $tfvars_file not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Updating $tfvars_file for $wps WPS...${NC}"
+    
+    # Get resource values for each service
+    local history_cpu=$(get_wps_cpu history "$wps")
+    local history_mem=$(get_wps_memory history "$wps")
+    local matching_cpu=$(get_wps_cpu matching "$wps")
+    local matching_mem=$(get_wps_memory matching "$wps")
+    local frontend_cpu=$(get_wps_cpu frontend "$wps")
+    local frontend_mem=$(get_wps_memory frontend "$wps")
+    local worker_cpu=$(get_wps_cpu worker "$wps")
+    local worker_mem=$(get_wps_memory worker "$wps")
+    
+    # Update or add each variable using sed
+    # History
+    if grep -q "^temporal_history_cpu" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_history_cpu.*/temporal_history_cpu    = $history_cpu/" "$tfvars_file"
+    else
+        echo "temporal_history_cpu    = $history_cpu" >> "$tfvars_file"
+    fi
+    if grep -q "^temporal_history_memory" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_history_memory.*/temporal_history_memory = $history_mem/" "$tfvars_file"
+    else
+        echo "temporal_history_memory = $history_mem" >> "$tfvars_file"
+    fi
+    
+    # Matching
+    if grep -q "^temporal_matching_cpu" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_matching_cpu.*/temporal_matching_cpu    = $matching_cpu/" "$tfvars_file"
+    else
+        echo "temporal_matching_cpu    = $matching_cpu" >> "$tfvars_file"
+    fi
+    if grep -q "^temporal_matching_memory" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_matching_memory.*/temporal_matching_memory = $matching_mem/" "$tfvars_file"
+    else
+        echo "temporal_matching_memory = $matching_mem" >> "$tfvars_file"
+    fi
+    
+    # Frontend
+    if grep -q "^temporal_frontend_cpu" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_frontend_cpu.*/temporal_frontend_cpu    = $frontend_cpu/" "$tfvars_file"
+    else
+        echo "temporal_frontend_cpu    = $frontend_cpu" >> "$tfvars_file"
+    fi
+    if grep -q "^temporal_frontend_memory" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_frontend_memory.*/temporal_frontend_memory = $frontend_mem/" "$tfvars_file"
+    else
+        echo "temporal_frontend_memory = $frontend_mem" >> "$tfvars_file"
+    fi
+    
+    # Worker
+    if grep -q "^temporal_worker_cpu" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_worker_cpu.*/temporal_worker_cpu    = $worker_cpu/" "$tfvars_file"
+    else
+        echo "temporal_worker_cpu    = $worker_cpu" >> "$tfvars_file"
+    fi
+    if grep -q "^temporal_worker_memory" "$tfvars_file"; then
+        sed -i.bak "s/^temporal_worker_memory.*/temporal_worker_memory = $worker_mem/" "$tfvars_file"
+    else
+        echo "temporal_worker_memory = $worker_mem" >> "$tfvars_file"
+    fi
+    
+    # Clean up backup files
+    rm -f "${tfvars_file}.bak"
+    
+    echo -e "${GREEN}✓ Updated terraform.tfvars:${NC}"
+    echo "  History:  CPU=$history_cpu, Memory=$history_mem"
+    echo "  Matching: CPU=$matching_cpu, Memory=$matching_mem"
+    echo "  Frontend: CPU=$frontend_cpu, Memory=$frontend_mem"
+    echo "  Worker:   CPU=$worker_cpu, Memory=$worker_mem"
 }
 
 # Parse command line arguments
@@ -69,12 +314,20 @@ while [[ $# -gt 0 ]]; do
             OVERRIDE_COUNT="$2"
             shift 2
             ;;
+        --wps)
+            TARGET_WPS="$2"
+            shift 2
+            ;;
+        --apply)
+            APPLY_TERRAFORM=true
+            shift
+            ;;
         --from-terraform)
             FROM_TERRAFORM=true
             shift
             ;;
         -h|--help)
-            head -20 "$0" | tail -18
+            head -35 "$0" | tail -33
             exit 0
             ;;
         *)
@@ -91,9 +344,16 @@ if [ -z "$COMMAND" ]; then
     echo "Usage: $0 [up|down] [OPTIONS]"
     echo ""
     echo "Examples:"
-    echo "  $0 up --from-terraform              # Scale to production counts"
-    echo "  $0 up --from-terraform --count 1    # Scale all to 1 replica"
-    echo "  $0 down --cluster temporal-dev-cluster --region eu-west-1"
+    echo "  $0 up --from-terraform                      # Scale to production counts"
+    echo "  $0 up --from-terraform --wps 75             # Scale for 75 WPS (replica counts only)"
+    echo "  $0 up --from-terraform --wps 75 --apply     # Full setup: update tfvars, terraform apply, scale"
+    echo "  $0 down --from-terraform                    # Scale all to 0"
+    exit 1
+fi
+
+# Validate --apply requires --wps
+if [ "$APPLY_TERRAFORM" = true ] && [ -z "$TARGET_WPS" ]; then
+    echo -e "${RED}Error: --apply requires --wps${NC}"
     exit 1
 fi
 
@@ -168,11 +428,36 @@ echo "Command: $COMMAND"
 if [ "$COMMAND" = "up" ]; then
     if [ -n "$OVERRIDE_COUNT" ]; then
         echo "Count: $OVERRIDE_COUNT (override for all services)"
+    elif [ -n "$TARGET_WPS" ]; then
+        echo "Target WPS: $TARGET_WPS"
+        echo "Counts: history=$(get_wps_count history $TARGET_WPS), matching=$(get_wps_count matching $TARGET_WPS), frontend=$(get_wps_count frontend $TARGET_WPS), worker=$(get_wps_count worker $TARGET_WPS), ui=1, grafana=1, adot=1"
+        if [ "$APPLY_TERRAFORM" = true ]; then
+            echo "Resources: Will update terraform.tfvars and apply"
+        fi
     else
         echo "Counts: history=4, matching=3, frontend=2, worker=2, ui=1, grafana=1, adot=1"
     fi
 fi
 echo ""
+
+# If --apply is set, update tfvars and run terraform apply
+if [ "$APPLY_TERRAFORM" = true ] && [ -n "$TARGET_WPS" ]; then
+    echo "=== Updating Terraform Configuration ==="
+    update_tfvars_for_wps "$TARGET_WPS"
+    echo ""
+    
+    echo "=== Running Terraform Apply ==="
+    cd terraform
+    terraform apply -auto-approve
+    cd "$PROJECT_ROOT"
+    echo ""
+    echo -e "${GREEN}✓ Terraform apply completed${NC}"
+    echo ""
+    
+    # Wait a moment for task definitions to be registered
+    echo "Waiting for task definitions to be registered..."
+    sleep 5
+fi
 
 # Scale each service
 for SERVICE in "${SERVICES[@]}"; do
@@ -182,6 +467,8 @@ for SERVICE in "${SERVICES[@]}"; do
     if [ "$COMMAND" = "up" ]; then
         if [ -n "$OVERRIDE_COUNT" ]; then
             TARGET_COUNT=$OVERRIDE_COUNT
+        elif [ -n "$TARGET_WPS" ]; then
+            TARGET_COUNT=$(get_wps_count "$SHORT_NAME" "$TARGET_WPS")
         else
             TARGET_COUNT=$(get_service_count "$SHORT_NAME")
         fi

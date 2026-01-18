@@ -1,0 +1,34 @@
+# Grafana datasource provisioning for ECS deployment
+# Auto-configures Amazon Managed Prometheus and CloudWatch datasources
+#
+# Environment variables substituted by entrypoint.sh:
+# - AMP_ENDPOINT: Amazon Managed Prometheus query endpoint
+# - AWS_REGION: AWS region for SigV4 auth and CloudWatch
+
+apiVersion: 1
+
+datasources:
+  # Amazon Managed Prometheus datasource with SigV4 authentication
+  - name: Prometheus
+    type: prometheus
+    uid: amp
+    access: proxy
+    url: ${AMP_ENDPOINT}
+    isDefault: true
+    editable: true
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+      sigV4Auth: true
+      sigV4AuthType: default
+      sigV4Region: ${AWS_REGION}
+
+  # CloudWatch datasource for Aurora DSQL and other AWS metrics
+  - name: CloudWatch
+    type: cloudwatch
+    uid: cloudwatch
+    access: proxy
+    editable: true
+    jsonData:
+      authType: default
+      defaultRegion: ${AWS_REGION}

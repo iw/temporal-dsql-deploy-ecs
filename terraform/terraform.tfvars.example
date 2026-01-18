@@ -120,6 +120,11 @@ grafana_admin_secret_name = "grafana/admin"
 grafana_cpu    = 256
 grafana_memory = 512
 # grafana_count  = 0   # Default: 0 (scale up after schema setup)
+
+# Grafana Docker image - use default or custom image with pre-configured dashboards
+# Default: "grafana/grafana-oss:latest"
+# Custom (with dashboards): Build with ./scripts/build-grafana.sh --from-terraform
+# Example: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-grafana:latest"
 grafana_image  = "grafana/grafana-oss:latest"
 
 # -----------------------------------------------------------------------------
