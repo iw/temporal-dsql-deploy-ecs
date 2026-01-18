@@ -62,6 +62,10 @@ resource "aws_ecs_task_definition" "grafana" {
         { name = "GF_AUTH_SIGV4_AUTH_ENABLED", value = "true" },
         { name = "AWS_SDK_LOAD_CONFIG", value = "true" },
 
+        # Amazon Managed Prometheus endpoint for datasource provisioning
+        { name = "AMP_ENDPOINT", value = aws_prometheus_workspace.main.prometheus_endpoint },
+        { name = "AWS_REGION", value = var.region },
+
         # Disable anonymous access
         { name = "GF_AUTH_ANONYMOUS_ENABLED", value = "false" },
 
