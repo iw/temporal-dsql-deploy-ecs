@@ -2,6 +2,24 @@
 # Infrastructure: 6 × m7g.xlarge EC2, 4096 shards, 3-node OpenSearch
 
 # =============================================================================
+# Eager Execution Settings
+# =============================================================================
+
+# Enable eager activity execution - activities can be dispatched back to the
+# same worker that completed the workflow task, bypassing the server round-trip
+# Required for SDK's DisableEagerActivities=false to have effect
+# Default: false (must be explicitly enabled)
+system.enableActivityEagerExecution:
+  - value: true
+    constraints: {}
+
+# Eager workflow start is enabled by default (true)
+# Allows first workflow task to be returned inline with StartWorkflowExecution response
+# system.enableEagerWorkflowStart:
+#   - value: true
+#     constraints: {}
+
+# =============================================================================
 # DSQL-Specific Settings
 # =============================================================================
 

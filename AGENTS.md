@@ -27,7 +27,8 @@ temporal-dsql-deploy-ecs/
 │   ├── vpc-endpoints.tf          # VPC endpoints for AWS services
 │   ├── ecs-cluster.tf            # ECS cluster with Service Connect namespace
 │   ├── ec2-cluster.tf            # EC2 instances, ASGs, capacity providers, placement
-│   ├── benchmark.tf              # Benchmark task definition and security group
+│   ├── benchmark.tf              # Benchmark generator task definition and security group
+│   ├── benchmark-worker.tf       # Benchmark worker service (processes workflows)
 │   ├── benchmark-ec2.tf          # Benchmark EC2 ASG and capacity provider (scale-from-zero)
 │   ├── temporal-history.tf       # History service task definition and ECS service
 │   ├── temporal-matching.tf      # Matching service task definition and ECS service
@@ -114,7 +115,8 @@ temporal-dsql-deploy-ecs/
 | `vpc-endpoints.tf` | Interface endpoints (ECR, SSM, Logs, etc.) and S3 gateway endpoint |
 | `ecs-cluster.tf` | ECS cluster with Container Insights, Service Connect namespace |
 | `ec2-cluster.tf` | Launch template, single ASG with 6 EC2 instances, capacity provider |
-| `benchmark.tf` | Benchmark task definition, IAM role, security group |
+| `benchmark.tf` | Benchmark generator task definition, IAM role, security group |
+| `benchmark-worker.tf` | Benchmark worker ECS service (processes benchmark workflows) |
 | `benchmark-ec2.tf` | Benchmark ASG (scale-from-zero) and capacity provider |
 | `temporal-*.tf` | Individual Temporal service task definitions and ECS services |
 | `grafana.tf` | Grafana deployment with Secrets Manager integration |
@@ -158,12 +160,46 @@ The benchmark runner (`benchmark/`) is a Go application for performance testing:
 | `internal/cleanup/` | Workflow termination after benchmark |
 | `workflows/` | Benchmark workflow implementations (simple, multi-activity, timer, child) |
 
+**Architecture:**
+The benchmark system uses a separated generator/worker architecture:
+- **Generator Task** (`benchmark.tf`): One-shot ECS task that submits workflows at the target rate
+- **Worker Service** (`benchmark-worker.tf`): Long-running ECS service that processes benchmark workflows
+
+This separation allows independent scaling of workers to handle high WPS loads without resource contention.
+
+**Generator Task Resources:**
+- **CPU**: 1024 (1 vCPU) - Sufficient for workflow submission
+- **Memory**: 2048 MB (2 GB)
+- Runs as a one-shot task, exits after benchmark duration + completion timeout
+
+**Worker Service Resources:**
+- **CPU**: 2048 (2 vCPU) per worker
+- **Memory**: 4096 MB (4 GB) per worker
+- **Replicas**: Configurable via `benchmark_worker_count` (default: 0, scale up for benchmarks)
+- Runs with `BENCHMARK_WORKER_ONLY=true` to only process workflows
+
 **Worker Configuration** (optimized for high throughput):
 - `MaxConcurrentActivityExecutionSize`: 200
 - `MaxConcurrentWorkflowTaskExecutionSize`: 200
 - `MaxConcurrentLocalActivityExecutionSize`: 200
-- `MaxConcurrentWorkflowTaskPollers`: 10
-- `MaxConcurrentActivityTaskPollers`: 10
+- `MaxConcurrentWorkflowTaskPollers`: 16
+- `MaxConcurrentActivityTaskPollers`: 16
+- `MaxConcurrentEagerActivityExecutionSize`: 100 (eager activities for lower latency)
+- `DisableEagerActivities`: false (enabled for faster activity dispatch)
+- `StickyScheduleToStartTimeout`: 5s (workflow state caching)
+
+**Server-Side Requirements for Worker Optimizations:**
+- `system.enableActivityEagerExecution: true` - Required for eager activities (default: false)
+- `system.enableEagerWorkflowStart: true` - Enabled by default, allows inline first workflow task
+- `system.enableStickyQuery: true` - Enabled by default, allows sticky execution caching
+
+**Completion Timeout** (for high WPS benchmarks):
+- At high WPS (e.g., 100 WPS over 5 minutes = 30,000 workflows), many workflows are still in-flight when the test duration ends
+- The benchmark runner waits for workflows to complete before reporting results
+- `BENCHMARK_COMPLETION_TIMEOUT`: Configurable timeout for waiting (default: auto-calculated)
+- Auto-calculation: `max(60s, duration)`, capped at 10 minutes
+- For 100 WPS × 5 min = 30,000 workflows: auto-calculates to 5 minutes drain time
+- Use `--completion-timeout` flag in `run-benchmark.sh` to override
 
 ## Design Decisions
 
@@ -207,10 +243,10 @@ Services are distributed across 6 EC2 instances using ECS spread placement:
 - No workload-specific placement constraints
 - ECS automatically places tasks based on available resources
 
-Production service counts:
-- **History**: 4 replicas (2 vCPU, 8 GiB each, 4096 shards)
-- **Matching**: 3 replicas (1 vCPU, 4 GiB each)
-- **Frontend**: 2 replicas (1 vCPU, 4 GiB each)
+Production service counts (100 WPS configuration):
+- **History**: 6 replicas (2 vCPU, 8 GiB each, 4096 shards)
+- **Matching**: 4 replicas (1 vCPU, 4 GiB each)
+- **Frontend**: 3 replicas (1 vCPU, 4 GiB each)
 - **Worker**: 2 replicas (1 vCPU, 4 GiB each)
 - **UI**: 1 replica (0.25 vCPU, 512 MiB)
 - **Grafana**: 1 replica (0.25 vCPU, 512 MiB)
@@ -236,15 +272,26 @@ The temporal-dsql plugin implements per-instance rate limiting via environment v
 - `DSQL_STAGGERED_STARTUP`: Enable random startup delay (default: true)
 - `DSQL_STAGGERED_STARTUP_MAX_DELAY`: Max startup delay (default: 5s)
 
-Service-specific limits are configured in each task definition to partition the cluster budget:
+**Rate Limiting Architecture:**
+The rate limiter is integrated into the `tokenRefreshingDriver.Open()` method, ensuring that ALL connection attempts are rate-limited, including:
+- Initial pool creation
+- Pool growth under load (when `database/sql` internally creates new connections)
+- Connection replacement after `MaxConnLifetime` expiry
+- Reconnection after connection failures
+
+This is critical because `database/sql` manages the connection pool internally and calls `driver.Open()` directly when growing the pool, bypassing any application-level rate limiting.
+
+Service-specific limits are configured in each task definition to partition the cluster budget.
+
+**100 WPS Configuration** (optimized for high throughput):
 
 | Service | Replicas | Rate/Instance | Burst/Instance | Total Rate |
 |---------|----------|---------------|----------------|------------|
-| History | 4 | 15/sec | 150 | 60/sec |
-| Matching | 3 | 8/sec | 80 | 24/sec |
-| Frontend | 2 | 5/sec | 50 | 10/sec |
-| Worker | 2 | 3/sec | 30 | 6/sec |
-| **Total** | **11** | - | - | **~100/sec** |
+| History | 6 | 8/sec | 40 | 48/sec |
+| Matching | 4 | 6/sec | 30 | 24/sec |
+| Frontend | 3 | 4/sec | 20 | 12/sec |
+| Worker | 2 | 2/sec | 10 | 4/sec |
+| **Total** | **15** | - | - | **~88/sec** |
 
 This ensures the cluster-wide 100/sec limit is respected even during rolling deployments or scaling events. Staggered startup adds a random 0-5s delay on first connection to prevent thundering herd during service restarts.
 
@@ -405,6 +452,46 @@ After pushing new images to ECR, force new deployments:
 ```bash
 ./scripts/cluster-management.sh force-deploy
 ```
+
+## Benchmark Results (January 2026)
+
+### 100 WPS Benchmark
+
+Configuration:
+- **History**: 6 replicas (2 vCPU, 8 GiB each)
+- **Matching**: 4 replicas (1 vCPU, 4 GiB each)
+- **Frontend**: 3 replicas (1 vCPU, 4 GiB each)
+- **Worker**: 2 replicas (1 vCPU, 4 GiB each)
+- **Benchmark Workers**: 4 replicas (2 vCPU, 4 GiB each)
+
+Results:
+
+| Metric | Value |
+|--------|-------|
+| Workflows Started | 28,348 |
+| Workflows Completed | 28,348 (100%) |
+| Actual Rate | 91.5 WPS |
+| P50 Latency | 239 ms |
+| P95 Latency | 3,700 ms |
+| P99 Latency | 11,456 ms |
+| Max Latency | 33,181 ms |
+
+### Key Findings
+
+1. **Connection Rate Limiting Fix Validated**: The fix to integrate rate limiting into `tokenRefreshingDriver.Open()` eliminated the cascade failures seen in earlier benchmarks. No `SQLSTATE 53400` (connection rate exceeded) errors.
+
+2. **100% Workflow Completion**: All 28,348 workflows completed successfully with no failures or lost workflows.
+
+3. **P50 Latency Excellent**: Sub-second latency for typical workflows indicates the system handles normal load well.
+
+4. **P99 Tail Latency Needs Tuning**: The 11.4s P99 latency exceeds the 5s threshold. This is likely due to DSQL's optimistic concurrency control causing retries under high contention.
+
+### Areas for Future Optimization
+
+- Increase history shards for better parallelism
+- Tune DSQL connection pool settings
+- Investigate OCC conflict patterns during high load
+- Consider distributed rate limiting (see Open Questions in temporal-dsql AGENTS.md)
 
 ## References
 

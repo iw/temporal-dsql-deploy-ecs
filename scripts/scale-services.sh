@@ -23,7 +23,7 @@ set -eo pipefail
 #   --wps 25   history=2 (1024/4096), matching=2 (512/2048), frontend=1 (512/2048), worker=1 (512/2048)
 #   --wps 50   history=3 (1024/4096), matching=2 (1024/4096), frontend=2 (512/2048), worker=2 (512/2048)
 #   --wps 75   history=4 (2048/8192), matching=3 (1024/4096), frontend=2 (1024/4096), worker=2 (1024/4096)
-#   --wps 100  history=5 (2048/8192), matching=4 (1024/4096), frontend=3 (1024/4096), worker=2 (1024/4096)
+#   --wps 100  history=6 (2048/8192), matching=4 (1024/4096), frontend=3 (1024/4096), worker=2 (1024/4096)
 #   --wps 150  history=6 (2048/8192), matching=5 (2048/8192), frontend=3 (1024/4096), worker=3 (1024/4096)
 #
 # Examples:
@@ -108,7 +108,7 @@ get_wps_count() {
         esac
     elif [ "$wps" -le 100 ]; then
         case "$service" in
-            history)  echo 5 ;;
+            history)  echo 6 ;;
             matching) echo 4 ;;
             frontend) echo 3 ;;
             worker)   echo 2 ;;

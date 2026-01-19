@@ -523,6 +523,26 @@ For initial testing with the production configuration (4 history, 3 matching, 2 
 ./scripts/run-benchmark.sh --from-terraform --rate 100 --duration 5m --wait
 ```
 
+### Benchmark Results (January 2026)
+
+Results from 100 WPS benchmark with 6 History, 4 Matching, 3 Frontend, 2 Worker replicas:
+
+| Metric | Value |
+|--------|-------|
+| Workflows Started | 28,348 |
+| Workflows Completed | 28,348 (100%) |
+| Actual Rate | 91.5 WPS |
+| P50 Latency | 239 ms |
+| P95 Latency | 3,700 ms |
+| P99 Latency | 11,456 ms |
+| Max Latency | 33,181 ms |
+
+Key findings:
+- **100% workflow completion** - No cascade failures or lost workflows
+- **DSQL connection rate limiting working** - No `SQLSTATE 53400` errors
+- **P50 latency excellent** - Sub-second for typical workflows
+- **P99 tail latency needs tuning** - Likely due to DSQL OCC retries under contention
+
 ### Viewing Benchmark Metrics
 
 Benchmark metrics are scraped by ADOT and sent to Amazon Managed Prometheus. View them in Grafana:

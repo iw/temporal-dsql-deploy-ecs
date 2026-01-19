@@ -92,9 +92,10 @@ resource "aws_ecs_task_definition" "temporal_frontend" {
 
         # DSQL Connection Rate Limiting
         # Frontend has lower direct DB access - mostly routing
-        # With 2 replicas at 5/sec each = 10/sec total for frontend
-        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "5" },
-        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "50" },
+        # With 3 replicas at 4/sec each = 12/sec total for frontend (100 WPS config)
+        # Lower per-instance limit to stay within cluster budget when scaled up
+        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "4" },
+        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "20" },
 
         # OpenSearch Configuration (AWS Managed)
         # Requirements: 4.7

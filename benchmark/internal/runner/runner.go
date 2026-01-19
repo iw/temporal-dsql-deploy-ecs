@@ -191,29 +191,52 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 	}
 	defer nsClient.Close()
 
-	// Create a worker to process workflows in the benchmark namespace
-	// Optimized for high-throughput benchmarking:
-	// - High concurrent execution sizes for parallel processing
-	// - Increased poller counts for faster task pickup
-	workerOptions := worker.Options{
-		// Concurrent execution limits
-		MaxConcurrentActivityExecutionSize:      200,
-		MaxConcurrentWorkflowTaskExecutionSize:  200,
-		MaxConcurrentLocalActivityExecutionSize: 200,
+	// Only start embedded worker if not in generator-only mode
+	// When running separate worker services, the generator doesn't need its own worker
+	var w worker.Worker
+	if !cfg.GeneratorOnly {
+		// Create a worker to process workflows in the benchmark namespace
+		// Optimized for high-throughput benchmarking:
+		// - High concurrent execution sizes for parallel processing
+		// - Increased poller counts for faster task pickup
+		// - Eager execution enabled for lower latency
+		// - Sticky execution enabled for workflow caching
+		workerOptions := worker.Options{
+			// Concurrent execution limits - high values for benchmark throughput
+			MaxConcurrentActivityExecutionSize:      200,
+			MaxConcurrentWorkflowTaskExecutionSize:  200,
+			MaxConcurrentLocalActivityExecutionSize: 200,
 
-		// Poller counts - higher values for faster task pickup
-		MaxConcurrentWorkflowTaskPollers: 10,
-		MaxConcurrentActivityTaskPollers: 10,
+			// Poller counts - higher values for faster task pickup
+			// Rule: pollers should be significantly < execution size
+			MaxConcurrentWorkflowTaskPollers: 16,
+			MaxConcurrentActivityTaskPollers: 16,
+
+			// Eager activity execution - reduces latency by executing locally when possible
+			// Activities requested from same workflow can start immediately without server round-trip
+			DisableEagerActivities:                  false,
+			MaxConcurrentEagerActivityExecutionSize: 100, // Allow up to 100 eager activities
+
+			// Sticky execution timeout - how long to keep workflow state cached
+			// Default is 5s, keeping it for workflow caching benefits
+			StickyScheduleToStartTimeout: 5 * time.Second,
+
+			// No rate limiting for benchmark - maximize throughput
+			// WorkerActivitiesPerSecond: 0 (unlimited, default is 100k)
+		}
+
+		w = worker.New(nsClient, DefaultTaskQueue, workerOptions)
+		workflows.RegisterAll(w)
+
+		// Start the worker
+		if err := w.Start(); err != nil {
+			return nil, fmt.Errorf("failed to start worker: %w", err)
+		}
+		defer w.Stop()
+		log.Println("Embedded worker started")
+	} else {
+		log.Println("Generator-only mode: no embedded worker (workflows processed by external workers)")
 	}
-
-	w := worker.New(nsClient, DefaultTaskQueue, workerOptions)
-	workflows.RegisterAll(w)
-
-	// Start the worker
-	if err := w.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start worker: %w", err)
-	}
-	defer w.Stop()
 
 	// Create workflow generator with completion callback using namespace client
 	gen := generator.NewGenerator(
@@ -245,7 +268,19 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 	}
 
 	// Wait for remaining workflows to complete (with timeout)
-	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Calculate completion timeout: use configured value or auto-calculate based on workload
+	completionTimeout := cfg.CompletionTimeout
+	if completionTimeout == 0 {
+		// Auto-calculate: estimate based on expected in-flight workflows
+		// At high WPS, many workflows may still be in-flight when test ends
+		// Use: max(60s, duration) to allow at least as much drain time as test duration
+		expectedWorkflows := cfg.TargetRate * cfg.Duration.Seconds()
+		completionTimeout = max(60*time.Second, cfg.Duration)
+		// Cap at 10 minutes to avoid indefinite waits
+		completionTimeout = min(completionTimeout, 10*time.Minute)
+		log.Printf("Auto-calculated completion timeout: %v (expected ~%.0f workflows)", completionTimeout, expectedWorkflows)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, completionTimeout)
 	defer cancel()
 	if err := gen.Wait(waitCtx); err != nil {
 		log.Printf("Warning: some workflows may not have completed: %v", err)

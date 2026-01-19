@@ -91,9 +91,10 @@ resource "aws_ecs_task_definition" "temporal_history" {
 
         # DSQL Connection Rate Limiting
         # History has highest DB load - allocate more of the 100/sec cluster limit
-        # With 4 replicas at 15/sec each = 60/sec total for history
-        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "15" },
-        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "150" },
+        # With 6 replicas at 8/sec each = 48/sec total for history (100 WPS config)
+        # Lower per-instance limit to stay within cluster budget when scaled up
+        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "8" },
+        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "40" },
         # Staggered startup enabled by default to prevent thundering herd
 
         # OpenSearch Configuration (AWS Managed)

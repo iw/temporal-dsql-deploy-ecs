@@ -90,9 +90,10 @@ resource "aws_ecs_task_definition" "temporal_matching" {
 
         # DSQL Connection Rate Limiting
         # Matching has moderate DB load - task queue operations
-        # With 3 replicas at 8/sec each = 24/sec total for matching
-        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "8" },
-        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "80" },
+        # With 4 replicas at 6/sec each = 24/sec total for matching (100 WPS config)
+        # Lower per-instance limit to stay within cluster budget when scaled up
+        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "6" },
+        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "30" },
 
         # OpenSearch Configuration (AWS Managed)
         # Matching needs visibility config for the shared persistence template

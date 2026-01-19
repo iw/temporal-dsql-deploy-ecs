@@ -21,6 +21,8 @@
 #   --child-count COUNT     Child workflows for child-workflow type (default: 3)
 #   --max-p99-latency DUR   Maximum acceptable p99 latency (default: 5s)
 #   --min-throughput RATE   Minimum acceptable throughput (default: 50)
+#   --completion-timeout DUR Timeout for waiting for workflows to complete (default: auto-calculated)
+#   --generator-only        Run in generator-only mode (no embedded worker)
 #   --from-terraform        Read cluster config from terraform.tfvars
 #   --wait                  Wait for task to complete and show results
 #   -h, --help              Show this help message
@@ -58,7 +60,9 @@ TIMER_DURATION="1s"
 CHILD_COUNT="3"
 MAX_P99_LATENCY="5s"
 MIN_THROUGHPUT="50"
+COMPLETION_TIMEOUT=""
 NAMESPACE="benchmark"
+GENERATOR_ONLY=false
 AWS_REGION="${AWS_REGION:-eu-west-1}"
 CLUSTER_NAME=""
 PROJECT_NAME=""
@@ -130,9 +134,17 @@ while [[ $# -gt 0 ]]; do
             MIN_THROUGHPUT="$2"
             shift 2
             ;;
+        --completion-timeout)
+            COMPLETION_TIMEOUT="$2"
+            shift 2
+            ;;
         --namespace)
             NAMESPACE="$2"
             shift 2
+            ;;
+        --generator-only)
+            GENERATOR_ONLY=true
+            shift
             ;;
         --from-terraform)
             FROM_TERRAFORM=true
@@ -262,6 +274,16 @@ build_env_overrides() {
     env_vars+='{"name": "BENCHMARK_MAX_P99_LATENCY", "value": "'"$MAX_P99_LATENCY"'"},'
     env_vars+='{"name": "BENCHMARK_MIN_THROUGHPUT", "value": "'"$MIN_THROUGHPUT"'"}'
 
+    # Add completion timeout if specified
+    if [ -n "${COMPLETION_TIMEOUT:-}" ]; then
+        env_vars+=',{"name": "BENCHMARK_COMPLETION_TIMEOUT", "value": "'"$COMPLETION_TIMEOUT"'"}'
+    fi
+
+    # Add generator-only mode if specified
+    if [ "$GENERATOR_ONLY" = true ]; then
+        env_vars+=',{"name": "BENCHMARK_GENERATOR_ONLY", "value": "true"}'
+    fi
+
     # Add workflow-specific parameters
     case "$WORKFLOW_TYPE" in
         multi-activity)
@@ -383,6 +405,16 @@ main() {
     echo "  Iterations:       $ITERATIONS"
     echo "  Max P99 Latency:  $MAX_P99_LATENCY"
     echo "  Min Throughput:   $MIN_THROUGHPUT"
+    if [ -n "${COMPLETION_TIMEOUT:-}" ]; then
+        echo "  Completion Timeout: $COMPLETION_TIMEOUT"
+    else
+        echo "  Completion Timeout: auto-calculated"
+    fi
+    if [ "$GENERATOR_ONLY" = true ]; then
+        echo "  Mode:             generator-only (no embedded worker)"
+    else
+        echo "  Mode:             full (embedded worker)"
+    fi
     
     case "$WORKFLOW_TYPE" in
         multi-activity)

@@ -456,9 +456,9 @@ variable "benchmark_max_instances" {
 }
 
 variable "benchmark_cpu" {
-  description = "CPU units for benchmark task (256, 512, 1024, 2048, 4096)"
+  description = "CPU units for benchmark task (256, 512, 1024, 2048, 4096). For 100 WPS with embedded worker, use 4096."
   type        = number
-  default     = 1024
+  default     = 4096
 
   validation {
     condition     = contains([256, 512, 1024, 2048, 4096], var.benchmark_cpu)
@@ -467,9 +467,9 @@ variable "benchmark_cpu" {
 }
 
 variable "benchmark_memory" {
-  description = "Memory in MB for benchmark task (must be compatible with CPU value)"
+  description = "Memory in MB for benchmark task (must be compatible with CPU value). For 100 WPS with embedded worker, use 8192."
   type        = number
-  default     = 2048
+  default     = 8192
 
   validation {
     condition     = var.benchmark_memory >= 512 && var.benchmark_memory <= 30720

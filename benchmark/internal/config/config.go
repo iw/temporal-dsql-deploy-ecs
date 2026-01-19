@@ -47,8 +47,11 @@ type BenchmarkConfig struct {
 	WorkerCount    int           // Number of parallel workers
 
 	// Execution configuration
-	Namespace  string // Benchmark namespace (auto-generated if empty)
-	Iterations int    // Number of test iterations
+	Namespace         string        // Benchmark namespace (auto-generated if empty)
+	Iterations        int           // Number of test iterations
+	CompletionTimeout time.Duration // Timeout for waiting for workflows to complete after test ends
+	GeneratorOnly     bool          // If true, only generate workflows (no embedded worker)
+	WorkerOnly        bool          // If true, only run worker (no workflow generation)
 
 	// Thresholds for pass/fail
 	MaxP99Latency time.Duration // Maximum acceptable p99 latency
@@ -61,18 +64,19 @@ type BenchmarkConfig struct {
 // DefaultConfig returns a BenchmarkConfig with default values.
 func DefaultConfig() BenchmarkConfig {
 	return BenchmarkConfig{
-		WorkflowType:    WorkflowTypeSimple,
-		ActivityCount:   5,
-		TimerDuration:   time.Second,
-		ChildCount:      3,
-		TargetRate:      100,
-		Duration:        5 * time.Minute,
-		RampUpDuration:  30 * time.Second,
-		WorkerCount:     4,
-		Iterations:      1,
-		MaxP99Latency:   5 * time.Second,
-		MinThroughput:   50,
-		TemporalAddress: "temporal-frontend:7233",
+		WorkflowType:      WorkflowTypeSimple,
+		ActivityCount:     5,
+		TimerDuration:     time.Second,
+		ChildCount:        3,
+		TargetRate:        100,
+		Duration:          5 * time.Minute,
+		RampUpDuration:    30 * time.Second,
+		WorkerCount:       4,
+		Iterations:        1,
+		CompletionTimeout: 0, // 0 means auto-calculate based on rate and duration
+		MaxP99Latency:     5 * time.Second,
+		MinThroughput:     50,
+		TemporalAddress:   "temporal-frontend:7233",
 	}
 }
 
@@ -156,6 +160,32 @@ func LoadFromEnv() (BenchmarkConfig, error) {
 		cfg.Iterations = n
 	}
 
+	// Completion timeout
+	if v := os.Getenv("BENCHMARK_COMPLETION_TIMEOUT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_COMPLETION_TIMEOUT: %w", err)
+		}
+		cfg.CompletionTimeout = d
+	}
+
+	// Mode configuration
+	if v := os.Getenv("BENCHMARK_GENERATOR_ONLY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_GENERATOR_ONLY: %w", err)
+		}
+		cfg.GeneratorOnly = b
+	}
+
+	if v := os.Getenv("BENCHMARK_WORKER_ONLY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_WORKER_ONLY: %w", err)
+		}
+		cfg.WorkerOnly = b
+	}
+
 	// Thresholds
 	if v := os.Getenv("BENCHMARK_MAX_P99_LATENCY"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -232,6 +262,11 @@ func (c *BenchmarkConfig) Validate() error {
 	// Validate iterations
 	if c.Iterations < MinIterations || c.Iterations > MaxIterations {
 		return fmt.Errorf("iterations %d out of range [%d, %d]", c.Iterations, MinIterations, MaxIterations)
+	}
+
+	// Validate completion timeout (must be non-negative, 0 means auto-calculate)
+	if c.CompletionTimeout < 0 {
+		return fmt.Errorf("completion timeout must be non-negative, got %v", c.CompletionTimeout)
 	}
 
 	// Validate thresholds (must be positive)

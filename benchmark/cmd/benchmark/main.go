@@ -8,12 +8,15 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
 
 	"github.com/temporalio/temporal-dsql-deploy-ecs/benchmark/internal/config"
 	"github.com/temporalio/temporal-dsql-deploy-ecs/benchmark/internal/metrics"
 	"github.com/temporalio/temporal-dsql-deploy-ecs/benchmark/internal/runner"
+	"github.com/temporalio/temporal-dsql-deploy-ecs/benchmark/workflows"
 )
 
 func main() {
@@ -49,7 +52,16 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	// Determine mode
+	mode := "full"
+	if cfg.GeneratorOnly {
+		mode = "generator-only"
+	} else if cfg.WorkerOnly {
+		mode = "worker-only"
+	}
+
 	log.Printf("Configuration loaded:")
+	log.Printf("  Mode: %s", mode)
 	log.Printf("  Workflow Type: %s", cfg.WorkflowType)
 	log.Printf("  Target Rate: %.2f workflows/sec", cfg.TargetRate)
 	log.Printf("  Duration: %v", cfg.Duration)
@@ -69,11 +81,14 @@ func run(ctx context.Context) error {
 	// Create metrics handler with SDK metrics integration
 	metricsHandler := metrics.NewHandler()
 
+	// Create SDK metrics handler once - will be reused for all clients
+	sdkMetricsHandler := metrics.SDKMetricsHandler(metricsHandler.Registry())
+
 	// Create Temporal client with SDK metrics
 	log.Printf("Connecting to Temporal at %s...", cfg.TemporalAddress)
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:       cfg.TemporalAddress,
-		MetricsHandler: metrics.SDKMetricsHandler(metricsHandler.Registry()),
+		MetricsHandler: sdkMetricsHandler,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to connect to Temporal cluster at %s: %w (cluster may be unhealthy)", cfg.TemporalAddress, err)
@@ -94,6 +109,11 @@ func run(ctx context.Context) error {
 		log.Println("Shutdown requested after health check")
 		return nil
 	default:
+	}
+
+	// Worker-only mode: just run workers, no benchmark execution
+	if cfg.WorkerOnly {
+		return runWorkerOnly(ctx, cfg, temporalClient, metricsHandler, sdkMetricsHandler)
 	}
 
 	// Create benchmark runner with metrics handler and host port
@@ -133,5 +153,70 @@ func run(ctx context.Context) error {
 	}
 
 	log.Println("Benchmark runner completed")
+	return nil
+}
+
+// runWorkerOnly runs only the worker without generating workflows.
+// This is used when running separate worker services to process benchmark workflows.
+func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClient client.Client, metricsHandler metrics.MetricsHandler, sdkMetricsHandler client.MetricsHandler) error {
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = "benchmark"
+	}
+
+	log.Printf("Starting worker-only mode for namespace: %s", namespace)
+	log.Printf("Task queue: %s", runner.DefaultTaskQueue)
+
+	// Start metrics server for worker metrics
+	if err := metricsHandler.StartServer(ctx, runner.MetricsPort); err != nil {
+		return fmt.Errorf("failed to start metrics server: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := metricsHandler.StopServer(shutdownCtx); err != nil {
+			log.Printf("Warning: failed to stop metrics server: %v", err)
+		}
+	}()
+
+	// Create namespace-specific client (reuse the SDK metrics handler)
+	nsClient, err := client.Dial(client.Options{
+		HostPort:       cfg.TemporalAddress,
+		Namespace:      namespace,
+		MetricsHandler: sdkMetricsHandler, // Reuse the same metrics handler
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create namespace client: %w", err)
+	}
+	defer nsClient.Close()
+
+	// Create worker with high-throughput settings
+	workerOptions := worker.Options{
+		MaxConcurrentActivityExecutionSize:      200,
+		MaxConcurrentWorkflowTaskExecutionSize:  200,
+		MaxConcurrentLocalActivityExecutionSize: 200,
+		MaxConcurrentWorkflowTaskPollers:        16,
+		MaxConcurrentActivityTaskPollers:        16,
+		DisableEagerActivities:                  false,
+		MaxConcurrentEagerActivityExecutionSize: 100,
+		StickyScheduleToStartTimeout:            5 * time.Second,
+	}
+
+	w := worker.New(nsClient, runner.DefaultTaskQueue, workerOptions)
+	workflows.RegisterAll(w)
+
+	// Start the worker
+	if err := w.Start(); err != nil {
+		return fmt.Errorf("failed to start worker: %w", err)
+	}
+	log.Println("Worker started, waiting for tasks...")
+
+	// Wait for shutdown signal
+	<-ctx.Done()
+	log.Println("Shutdown signal received, stopping worker...")
+
+	w.Stop()
+	log.Println("Worker stopped")
+
 	return nil
 }

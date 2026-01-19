@@ -93,9 +93,10 @@ resource "aws_ecs_task_definition" "temporal_worker" {
 
         # DSQL Connection Rate Limiting
         # Worker has lowest DB load - background system workflows
-        # With 2 replicas at 3/sec each = 6/sec total for worker
-        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "3" },
-        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "30" },
+        # With 2 replicas at 2/sec each = 4/sec total for worker (100 WPS config)
+        # Lower per-instance limit to stay within cluster budget when scaled up
+        { name = "DSQL_CONNECTION_RATE_LIMIT", value = "2" },
+        { name = "DSQL_CONNECTION_BURST_LIMIT", value = "10" },
 
         # OpenSearch Configuration (AWS Managed)
         # Worker needs visibility config for the shared persistence template
