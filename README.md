@@ -790,7 +790,7 @@ curl -G --data-urlencode 'query=temporal_workflow_completed_total' \
 
 ## License
 
-Apache 2.0
+MIT License - see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
