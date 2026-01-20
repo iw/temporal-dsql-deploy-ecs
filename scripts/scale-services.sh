@@ -20,11 +20,11 @@ set -eo pipefail
 #   -h, --help             Show this help message
 #
 # WPS Presets (replica counts and CPU/memory):
-#   --wps 25   history=2 (1024/4096), matching=2 (512/2048), frontend=1 (512/2048), worker=1 (512/2048)
-#   --wps 50   history=3 (1024/4096), matching=2 (1024/4096), frontend=2 (512/2048), worker=2 (512/2048)
-#   --wps 75   history=4 (2048/8192), matching=3 (1024/4096), frontend=2 (1024/4096), worker=2 (1024/4096)
-#   --wps 100  history=6 (2048/8192), matching=4 (1024/4096), frontend=3 (1024/4096), worker=2 (1024/4096)
-#   --wps 150  history=6 (2048/8192), matching=5 (2048/8192), frontend=3 (1024/4096), worker=3 (1024/4096)
+#   --wps 25   history=2 (1024/4096), matching=2 (512/2048), frontend=1 (512/2048), worker=1 (512/1024)
+#   --wps 50   history=3 (1024/4096), matching=2 (1024/2048), frontend=2 (512/2048), worker=2 (512/1024)
+#   --wps 75   history=4 (2048/8192), matching=3 (1024/2048), frontend=2 (1024/4096), worker=2 (512/1024)
+#   --wps 100  history=6 (2048/8192), matching=4 (1024/2048), frontend=3 (1024/4096), worker=2 (512/1024)
+#   --wps 150  history=8 (4096/8192), matching=6 (1024/2048), frontend=4 (2048/4096), worker=2 (512/1024)
 #
 # Examples:
 #   ./scripts/scale-services.sh up --from-terraform --wps 75 --apply   # Full setup for 75 WPS
@@ -120,10 +120,10 @@ get_wps_count() {
     else
         # 150+ WPS
         case "$service" in
-            history)  echo 6 ;;
-            matching) echo 5 ;;
-            frontend) echo 3 ;;
-            worker)   echo 3 ;;
+            history)  echo 8 ;;
+            matching) echo 6 ;;
+            frontend) echo 4 ;;
+            worker)   echo 2 ;;
             ui)       echo 1 ;;
             grafana)  echo 1 ;;
             adot)     echo 1 ;;
@@ -158,16 +158,16 @@ get_wps_cpu() {
             history)  echo 2048 ;;
             matching) echo 1024 ;;
             frontend) echo 1024 ;;
-            worker)   echo 1024 ;;
+            worker)   echo 512 ;;
             *)        echo 256 ;;
         esac
     else
         # 150+ WPS
         case "$service" in
-            history)  echo 2048 ;;
-            matching) echo 2048 ;;
-            frontend) echo 1024 ;;
-            worker)   echo 1024 ;;
+            history)  echo 4096 ;;
+            matching) echo 1024 ;;
+            frontend) echo 2048 ;;
+            worker)   echo 512 ;;
             *)        echo 256 ;;
         esac
     fi
@@ -183,32 +183,32 @@ get_wps_memory() {
             history)  echo 4096 ;;
             matching) echo 2048 ;;
             frontend) echo 2048 ;;
-            worker)   echo 2048 ;;
+            worker)   echo 1024 ;;
             *)        echo 512 ;;
         esac
     elif [ "$wps" -le 50 ]; then
         case "$service" in
             history)  echo 4096 ;;
-            matching) echo 4096 ;;
+            matching) echo 2048 ;;
             frontend) echo 2048 ;;
-            worker)   echo 2048 ;;
+            worker)   echo 1024 ;;
             *)        echo 512 ;;
         esac
     elif [ "$wps" -le 100 ]; then
         case "$service" in
             history)  echo 8192 ;;
-            matching) echo 4096 ;;
+            matching) echo 2048 ;;
             frontend) echo 4096 ;;
-            worker)   echo 4096 ;;
+            worker)   echo 1024 ;;
             *)        echo 512 ;;
         esac
     else
         # 150+ WPS
         case "$service" in
             history)  echo 8192 ;;
-            matching) echo 8192 ;;
+            matching) echo 2048 ;;
             frontend) echo 4096 ;;
-            worker)   echo 4096 ;;
+            worker)   echo 1024 ;;
             *)        echo 512 ;;
         esac
     fi

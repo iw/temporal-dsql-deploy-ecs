@@ -63,9 +63,9 @@ variable "temporal_admin_tools_image" {
 # -----------------------------------------------------------------------------
 
 variable "temporal_history_cpu" {
-  description = "CPU units for History service (256, 512, 1024, 2048, 4096)"
+  description = "CPU units for History service (256, 512, 1024, 2048, 4096). Recommended: 4096 for high throughput (150+ WPS)"
   type        = number
-  default     = 2048
+  default     = 4096
 
   validation {
     condition     = contains([256, 512, 1024, 2048, 4096], var.temporal_history_cpu)
@@ -74,7 +74,7 @@ variable "temporal_history_cpu" {
 }
 
 variable "temporal_history_memory" {
-  description = "Memory in MB for History service (must be compatible with CPU value)"
+  description = "Memory in MB for History service (must be compatible with CPU value). Recommended: 8192 for high throughput"
   type        = number
   default     = 8192
 
@@ -112,7 +112,7 @@ variable "temporal_history_shards" {
 # -----------------------------------------------------------------------------
 
 variable "temporal_matching_cpu" {
-  description = "CPU units for Matching service (256, 512, 1024, 2048, 4096)"
+  description = "CPU units for Matching service (256, 512, 1024, 2048, 4096). Recommended: 1024 for most workloads"
   type        = number
   default     = 1024
 
@@ -123,9 +123,9 @@ variable "temporal_matching_cpu" {
 }
 
 variable "temporal_matching_memory" {
-  description = "Memory in MB for Matching service (must be compatible with CPU value)"
+  description = "Memory in MB for Matching service (must be compatible with CPU value). Recommended: 2048 for most workloads"
   type        = number
-  default     = 4096
+  default     = 2048
 
   validation {
     condition     = var.temporal_matching_memory >= 512 && var.temporal_matching_memory <= 30720
@@ -149,9 +149,9 @@ variable "temporal_matching_count" {
 # -----------------------------------------------------------------------------
 
 variable "temporal_frontend_cpu" {
-  description = "CPU units for Frontend service (256, 512, 1024, 2048, 4096)"
+  description = "CPU units for Frontend service (256, 512, 1024, 2048, 4096). Recommended: 2048 for high throughput (150+ WPS)"
   type        = number
-  default     = 1024
+  default     = 2048
 
   validation {
     condition     = contains([256, 512, 1024, 2048, 4096], var.temporal_frontend_cpu)
@@ -160,7 +160,7 @@ variable "temporal_frontend_cpu" {
 }
 
 variable "temporal_frontend_memory" {
-  description = "Memory in MB for Frontend service (must be compatible with CPU value)"
+  description = "Memory in MB for Frontend service (must be compatible with CPU value). Recommended: 4096 for high throughput"
   type        = number
   default     = 4096
 
@@ -186,9 +186,9 @@ variable "temporal_frontend_count" {
 # -----------------------------------------------------------------------------
 
 variable "temporal_worker_cpu" {
-  description = "CPU units for Worker service (256, 512, 1024, 2048, 4096)"
+  description = "CPU units for Worker service (256, 512, 1024, 2048, 4096). Recommended: 512 for system workflows"
   type        = number
-  default     = 1024
+  default     = 512
 
   validation {
     condition     = contains([256, 512, 1024, 2048, 4096], var.temporal_worker_cpu)
@@ -197,9 +197,9 @@ variable "temporal_worker_cpu" {
 }
 
 variable "temporal_worker_memory" {
-  description = "Memory in MB for Worker service (must be compatible with CPU value)"
+  description = "Memory in MB for Worker service (must be compatible with CPU value). Recommended: 1024 for system workflows"
   type        = number
-  default     = 4096
+  default     = 1024
 
   validation {
     condition     = var.temporal_worker_memory >= 512 && var.temporal_worker_memory <= 30720
@@ -417,9 +417,9 @@ variable "ec2_instance_type" {
 }
 
 variable "ec2_instance_count" {
-  description = "Number of EC2 instances in the ECS cluster (6 recommended for production workloads)"
+  description = "Number of EC2 instances in the ECS cluster. Recommended: 6 for 100 WPS, 10 for 150 WPS"
   type        = number
-  default     = 6
+  default     = 10
 
   validation {
     condition     = var.ec2_instance_count >= 1 && var.ec2_instance_count <= 20

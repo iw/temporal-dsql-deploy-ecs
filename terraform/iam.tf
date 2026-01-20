@@ -206,6 +206,26 @@ resource "aws_iam_role_policy" "temporal_opensearch" {
   })
 }
 
+# DynamoDB access policy for DSQL distributed rate limiter
+resource "aws_iam_role_policy" "temporal_dynamodb" {
+  name = "dynamodb-rate-limiter"
+  role = aws_iam_role.temporal_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem"
+      ]
+      Resource = aws_dynamodb_table.dsql_rate_limiter.arn
+    }]
+  })
+}
+
 
 # -----------------------------------------------------------------------------
 # Grafana Task Role
@@ -305,32 +325,32 @@ resource "aws_iam_role_policy" "grafana_cloudwatch" {
         "cloudwatch:GetInsightRuleReport"
       ]
       Resource = "*"
-    },
-    {
-      Effect = "Allow"
-      Action = [
-        "logs:DescribeLogGroups",
-        "logs:GetLogGroupFields",
-        "logs:StartQuery",
-        "logs:StopQuery",
-        "logs:GetQueryResults",
-        "logs:GetLogEvents"
-      ]
-      Resource = "*"
-    },
-    {
-      Effect = "Allow"
-      Action = [
-        "ec2:DescribeTags",
-        "ec2:DescribeInstances",
-        "ec2:DescribeRegions"
-      ]
-      Resource = "*"
-    },
-    {
-      Effect = "Allow"
-      Action = "tag:GetResources"
-      Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:GetLogGroupFields",
+          "logs:StartQuery",
+          "logs:StopQuery",
+          "logs:GetQueryResults",
+          "logs:GetLogEvents"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeTags",
+          "ec2:DescribeInstances",
+          "ec2:DescribeRegions"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "tag:GetResources"
+        Resource = "*"
     }]
   })
 }

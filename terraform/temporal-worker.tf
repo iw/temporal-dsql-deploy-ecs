@@ -98,6 +98,11 @@ resource "aws_ecs_task_definition" "temporal_worker" {
         { name = "DSQL_CONNECTION_RATE_LIMIT", value = "2" },
         { name = "DSQL_CONNECTION_BURST_LIMIT", value = "10" },
 
+        # DSQL Distributed Rate Limiter (DynamoDB-backed cluster-wide coordination)
+        { name = "DSQL_DISTRIBUTED_RATE_LIMITER_ENABLED", value = "true" },
+        { name = "DSQL_DISTRIBUTED_RATE_LIMITER_TABLE", value = aws_dynamodb_table.dsql_rate_limiter.name },
+        { name = "DSQL_DISTRIBUTED_RATE_LIMITER_LIMIT", value = "100" },
+
         # OpenSearch Configuration (AWS Managed)
         # Worker needs visibility config for the shared persistence template
         { name = "TEMPORAL_ELASTICSEARCH_HOST", value = aws_opensearch_domain.temporal.endpoint },

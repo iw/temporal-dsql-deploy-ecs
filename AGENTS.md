@@ -8,7 +8,7 @@ Terraform infrastructure for deploying Temporal workflow engine on AWS ECS on EC
 
 - **Multi-service architecture**: 5 separate Temporal services (History, Matching, Frontend, Worker, UI) + Grafana + ADOT Collector
 - **ECS Service Connect**: Modern service mesh with Envoy sidecar for inter-service communication
-- **ECS on EC2 with Graviton**: 6x m7g.xlarge instances with ECS managed placement for stable IPs and cluster membership
+- **ECS on EC2 with Graviton**: 10x m7g.xlarge instances with ECS managed placement for stable IPs and cluster membership
 - **Private-only networking**: No public subnets, VPC endpoints for AWS services
 - **Aurora DSQL**: Serverless PostgreSQL-compatible persistence with IAM authentication
 - **OpenSearch Provisioned**: 3-node m6g.large.search cluster for visibility
@@ -114,7 +114,8 @@ temporal-dsql-deploy-ecs/
 | `vpc.tf` | VPC with private subnets, NAT Gateway for outbound access |
 | `vpc-endpoints.tf` | Interface endpoints (ECR, SSM, Logs, etc.) and S3 gateway endpoint |
 | `ecs-cluster.tf` | ECS cluster with Container Insights, Service Connect namespace |
-| `ec2-cluster.tf` | Launch template, single ASG with 6 EC2 instances, capacity provider |
+| `ec2-cluster.tf` | Launch template, single ASG with EC2 instances, capacity provider |
+| `dynamodb.tf` | DynamoDB table for distributed DSQL connection rate limiting |
 | `benchmark.tf` | Benchmark generator task definition, IAM role, security group |
 | `benchmark-worker.tf` | Benchmark worker ECS service (processes benchmark workflows) |
 | `benchmark-ec2.tf` | Benchmark ASG (scale-from-zero) and capacity provider |
@@ -232,25 +233,31 @@ No public subnets or internet-facing resources:
 All ECS tasks run on Graviton-based m7g.xlarge EC2 instances:
 - 20-40% cost savings over x86 instances
 - Stable IPs for Temporal's ringpop cluster membership
-- 6 instances provide capacity for production workloads
+- Default 10 instances for 150 WPS workloads (configurable)
 - Uses ECS-optimized Amazon Linux 2023 AMI for ARM64
 
 ### 5. ECS Managed Placement
 
-Services are distributed across 6 EC2 instances using ECS spread placement:
+Services are distributed across EC2 instances using ECS spread placement:
 - Spread across availability zones for high availability
 - Spread across instances for even distribution
 - No workload-specific placement constraints
 - ECS automatically places tasks based on available resources
 
-Production service counts (100 WPS configuration):
-- **History**: 6 replicas (2 vCPU, 8 GiB each, 4096 shards)
-- **Matching**: 4 replicas (1 vCPU, 4 GiB each)
-- **Frontend**: 3 replicas (1 vCPU, 4 GiB each)
-- **Worker**: 2 replicas (1 vCPU, 4 GiB each)
+**150 WPS Configuration** (10x m7g.xlarge = 40 vCPUs, 160 GiB RAM):
+- **History**: 8 replicas (4 vCPU, 8 GiB each, 4096 shards)
+- **Matching**: 6 replicas (1 vCPU, 2 GiB each)
+- **Frontend**: 4 replicas (2 vCPU, 4 GiB each)
+- **Worker**: 2 replicas (0.5 vCPU, 1 GiB each)
 - **UI**: 1 replica (0.25 vCPU, 512 MiB)
 - **Grafana**: 1 replica (0.25 vCPU, 512 MiB)
 - **ADOT**: 1 replica (0.5 vCPU, 1 GiB)
+
+**100 WPS Configuration** (6x m7g.xlarge = 24 vCPUs, 96 GiB RAM):
+- **History**: 6 replicas (2 vCPU, 8 GiB each)
+- **Matching**: 4 replicas (1 vCPU, 4 GiB each)
+- **Frontend**: 3 replicas (1 vCPU, 4 GiB each)
+- **Worker**: 2 replicas (1 vCPU, 4 GiB each)
 
 ### 6. IAM Authentication for DSQL
 
@@ -294,6 +301,25 @@ Service-specific limits are configured in each task definition to partition the 
 | **Total** | **15** | - | - | **~88/sec** |
 
 This ensures the cluster-wide 100/sec limit is respected even during rolling deployments or scaling events. Staggered startup adds a random 0-5s delay on first connection to prevent thundering herd during service restarts.
+
+### 6b. Distributed Rate Limiting (DynamoDB-backed)
+
+For cluster-wide coordination of DSQL connection rate limiting across all service instances, a DynamoDB-backed distributed rate limiter is available:
+
+- **DynamoDB Table**: `${project_name}-dsql-rate-limiter`
+- **On-demand billing**: Pay-per-request, $0 when idle
+- **TTL enabled**: Automatic cleanup of old rate limit entries (3 minutes)
+
+**Environment Variables:**
+- `DSQL_DISTRIBUTED_RATE_LIMITER_ENABLED`: Set to `true` to enable
+- `DSQL_DISTRIBUTED_RATE_LIMITER_TABLE`: DynamoDB table name
+- `DSQL_DISTRIBUTED_RATE_LIMITER_LIMIT`: Cluster-wide limit per second (default: 100)
+
+**Table Schema:**
+- Partition key: `pk` (String) - Format: `dsqlconnect#<endpoint>#<unix_second>`
+- TTL attribute: `ttl_epoch` (Number) - Auto-cleanup after 3 minutes
+
+This provides true cluster-wide coordination, ensuring the DSQL connection rate limit is respected regardless of how many service instances are running or how they're distributed.
 
 ### 7. External Secret Creation
 

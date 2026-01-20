@@ -6,7 +6,7 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 
 - **Multi-service architecture**: Separate ECS services for History, Matching, Frontend, Worker, and UI
 - **ECS Service Connect**: Modern service mesh with Envoy sidecar for fast failover
-- **ECS on EC2 with Graviton**: 6x m7g.xlarge ARM64 instances with ECS managed placement
+- **ECS on EC2 with Graviton**: 10x m7g.xlarge ARM64 instances with ECS managed placement (configurable)
 - **Aurora DSQL**: Serverless PostgreSQL-compatible persistence with IAM authentication
 - **OpenSearch Provisioned**: 3-node m6g.large.search cluster for visibility
 - **Amazon Managed Prometheus**: Metrics collection and storage
@@ -26,7 +26,7 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 │  │                    ECS Cluster with Service Connect                 │    │
 │  │                                                                     │    │
 │  │  ┌─────────────────────────────────────────────────────────────┐   │    │
-│  │  │  6 × m7g.xlarge EC2 instances (4 vCPU, 16 GiB each)         │   │    │
+│  │  │  6-10 × m7g.xlarge EC2 instances (4 vCPU, 16 GiB each)       │   │    │
 │  │  │  ECS managed placement spreads tasks across instances/AZs   │   │    │
 │  │  │                                                             │   │    │
 │  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │   │    │
@@ -67,15 +67,26 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 
 ### Production Configuration
 
+**150 WPS Configuration** (10x m7g.xlarge = 40 vCPUs, 160 GiB RAM):
+
 | Service | Replicas | CPU | Memory | Notes |
 |---------|----------|-----|--------|-------|
-| History | 4 | 2 vCPU | 8 GiB | 4096 shards |
-| Matching | 3 | 1 vCPU | 4 GiB | 16 task queue partitions |
-| Frontend | 2 | 1 vCPU | 4 GiB | gRPC API gateway |
-| Worker | 2 | 1 vCPU | 4 GiB | System workflows |
+| History | 8 | 4 vCPU | 8 GiB | 4096 shards |
+| Matching | 6 | 1 vCPU | 2 GiB | 16 task queue partitions |
+| Frontend | 4 | 2 vCPU | 4 GiB | gRPC API gateway |
+| Worker | 2 | 0.5 vCPU | 1 GiB | System workflows |
 | UI | 1 | 0.25 vCPU | 512 MiB | Web interface |
 | Grafana | 1 | 0.25 vCPU | 512 MiB | Dashboards |
 | ADOT | 1 | 0.5 vCPU | 1 GiB | Metrics collector |
+
+**100 WPS Configuration** (6x m7g.xlarge = 24 vCPUs, 96 GiB RAM):
+
+| Service | Replicas | CPU | Memory | Notes |
+|---------|----------|-----|--------|-------|
+| History | 6 | 2 vCPU | 8 GiB | 4096 shards |
+| Matching | 4 | 1 vCPU | 4 GiB | 16 task queue partitions |
+| Frontend | 3 | 1 vCPU | 4 GiB | gRPC API gateway |
+| Worker | 2 | 1 vCPU | 4 GiB | System workflows |
 
 ## Prerequisites
 
@@ -560,7 +571,7 @@ Estimated costs for eu-west-1 region (January 2026):
 
 | Resource | Configuration | Hourly Cost |
 |----------|--------------|-------------|
-| EC2 (6 instances) | m7g.xlarge (4 vCPU, 16 GB each) | $0.98 |
+| EC2 (10 instances) | m7g.xlarge (4 vCPU, 16 GB each) | $1.63 |
 | NAT Gateway | Single AZ | $0.048 |
 | NAT Gateway Data | ~2 GB/hr estimate | $0.096 |
 | OpenSearch (3 nodes) | m6g.large.search, 100GB gp3 each | $0.42 |
@@ -568,15 +579,16 @@ Estimated costs for eu-west-1 region (January 2026):
 | CloudWatch Logs | ~200 MB/hr | $0.012 |
 | Secrets Manager | 1 secret | $0.0004 |
 | Amazon Managed Prometheus | Workspace + ingestion | $0.02 |
-| **Total Hourly** | | **~$1.66** |
+| DynamoDB | On-demand, rate limiter table | ~$0.001 |
+| **Total Hourly** | | **~$2.31** |
 
 ### Daily/Monthly Estimates
 
 | Usage Pattern | Cost |
 |--------------|------|
-| 8-hour development day | ~$13.30 |
-| Monthly (8 hrs/day, 22 days) | ~$292 |
-| 24/7 operation | ~$1,200/month |
+| 8-hour development day | ~$18.50 |
+| Monthly (8 hrs/day, 22 days) | ~$407 |
+| 24/7 operation | ~$1,680/month |
 
 ### Cost Optimization Tips
 
@@ -747,19 +759,19 @@ curl -G --data-urlencode 'query=temporal_workflow_completed_total' \
 | dsql_cluster_endpoint | Aurora DSQL cluster endpoint | string | - | yes |
 | dsql_cluster_arn | Aurora DSQL cluster ARN | string | - | yes |
 | ec2_instance_type | EC2 instance type (ARM64) | string | "m7g.xlarge" | no |
-| ec2_instance_count | Number of EC2 instances | number | 6 | no |
-| temporal_history_cpu | History service CPU units | number | 2048 | no |
+| ec2_instance_count | Number of EC2 instances | number | 10 | no |
+| temporal_history_cpu | History service CPU units | number | 4096 | no |
 | temporal_history_memory | History service memory MB | number | 8192 | no |
 | temporal_history_count | History service task count | number | 0 | no |
 | temporal_history_shards | Number of history shards | number | 4096 | no |
 | temporal_matching_cpu | Matching service CPU units | number | 1024 | no |
-| temporal_matching_memory | Matching service memory MB | number | 4096 | no |
+| temporal_matching_memory | Matching service memory MB | number | 2048 | no |
 | temporal_matching_count | Matching service task count | number | 0 | no |
-| temporal_frontend_cpu | Frontend service CPU units | number | 1024 | no |
+| temporal_frontend_cpu | Frontend service CPU units | number | 2048 | no |
 | temporal_frontend_memory | Frontend service memory MB | number | 4096 | no |
 | temporal_frontend_count | Frontend service task count | number | 0 | no |
-| temporal_worker_cpu | Worker service CPU units | number | 1024 | no |
-| temporal_worker_memory | Worker service memory MB | number | 4096 | no |
+| temporal_worker_cpu | Worker service CPU units | number | 512 | no |
+| temporal_worker_memory | Worker service memory MB | number | 1024 | no |
 | temporal_worker_count | Worker service task count | number | 0 | no |
 | temporal_ui_cpu | UI service CPU units | number | 256 | no |
 | temporal_ui_memory | UI service memory MB | number | 512 | no |
