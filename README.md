@@ -6,7 +6,7 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 
 - **Multi-service architecture**: Separate ECS services for History, Matching, Frontend, Worker, and UI
 - **ECS Service Connect**: Modern service mesh with Envoy sidecar for fast failover
-- **ECS on EC2 with Graviton**: 10x m7g.xlarge ARM64 instances with ECS managed placement (configurable)
+- **ECS on EC2 with Graviton**: 10x m7g.2xlarge ARM64 instances with ECS managed placement (configurable)
 - **Aurora DSQL**: Serverless PostgreSQL-compatible persistence with IAM authentication
 - **OpenSearch Provisioned**: 3-node m6g.large.search cluster for visibility
 - **Amazon Managed Prometheus**: Metrics collection and storage
@@ -67,19 +67,20 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 
 ### Production Configuration
 
-**150 WPS Configuration** (10x m7g.xlarge = 40 vCPUs, 160 GiB RAM):
+**150 WPS Configuration** (10x m7g.2xlarge = 80 vCPUs, 320 GiB RAM):
 
 | Service | Replicas | CPU | Memory | Notes |
 |---------|----------|-----|--------|-------|
 | History | 8 | 4 vCPU | 8 GiB | 4096 shards |
-| Matching | 6 | 1 vCPU | 2 GiB | 16 task queue partitions |
+| Matching | 6 | 1 vCPU | 2 GiB | 32 task queue partitions |
 | Frontend | 4 | 2 vCPU | 4 GiB | gRPC API gateway |
 | Worker | 2 | 0.5 vCPU | 1 GiB | System workflows |
 | UI | 1 | 0.25 vCPU | 512 MiB | Web interface |
 | Grafana | 1 | 0.25 vCPU | 512 MiB | Dashboards |
 | ADOT | 1 | 0.5 vCPU | 1 GiB | Metrics collector |
+| Benchmark Workers | 6 | 2 vCPU | 4 GiB | Workflow processing |
 
-**100 WPS Configuration** (6x m7g.xlarge = 24 vCPUs, 96 GiB RAM):
+**100 WPS Configuration** (6x m7g.2xlarge = 48 vCPUs, 192 GiB RAM):
 
 | Service | Replicas | CPU | Memory | Notes |
 |---------|----------|-----|--------|-------|
@@ -536,23 +537,24 @@ For initial testing with the production configuration (4 history, 3 matching, 2 
 
 ### Benchmark Results (January 2026)
 
-Results from 100 WPS benchmark with 6 History, 4 Matching, 3 Frontend, 2 Worker replicas:
+Results from 150 WPS benchmark with 8 History, 6 Matching, 4 Frontend, 2 Worker, 6 Benchmark Worker replicas:
 
 | Metric | Value |
 |--------|-------|
-| Workflows Started | 28,348 |
-| Workflows Completed | 28,348 (100%) |
-| Actual Rate | 91.5 WPS |
-| P50 Latency | 239 ms |
-| P95 Latency | 3,700 ms |
-| P99 Latency | 11,456 ms |
-| Max Latency | 33,181 ms |
+| Target Rate | 150 WPS |
+| Actual Rate | 136.74 WPS |
+| Workflows Started | 41,052 |
+| Workflows Completed | 41,052 (100%) |
+| P50 Latency | 197 ms |
+| P95 Latency | 220 ms |
+| P99 Latency | 259 ms |
+| Max Latency | 594 ms |
 
 Key findings:
-- **100% workflow completion** - No cascade failures or lost workflows
-- **DSQL connection rate limiting working** - No `SQLSTATE 53400` errors
-- **P50 latency excellent** - Sub-second for typical workflows
-- **P99 tail latency needs tuning** - Likely due to DSQL OCC retries under contention
+- **100% workflow completion** - Zero failures across 41,052 workflows
+- **Sub-300ms P99 latency** - Excellent tail latency under sustained load
+- **~1,000 DSQL connections** - Pool pre-warmed and stable throughout test
+- **No OCC retry storms** - GetWorkflowExecution optimization working
 
 ### Viewing Benchmark Metrics
 
@@ -571,7 +573,7 @@ Estimated costs for eu-west-1 region (January 2026):
 
 | Resource | Configuration | Hourly Cost |
 |----------|--------------|-------------|
-| EC2 (10 instances) | m7g.xlarge (4 vCPU, 16 GB each) | $1.63 |
+| EC2 (10 instances) | m7g.2xlarge (8 vCPU, 32 GB each) | $3.64 |
 | NAT Gateway | Single AZ | $0.048 |
 | NAT Gateway Data | ~2 GB/hr estimate | $0.096 |
 | OpenSearch (3 nodes) | m6g.large.search, 100GB gp3 each | $0.42 |
@@ -580,15 +582,17 @@ Estimated costs for eu-west-1 region (January 2026):
 | Secrets Manager | 1 secret | $0.0004 |
 | Amazon Managed Prometheus | Workspace + ingestion | $0.02 |
 | DynamoDB | On-demand, rate limiter table | ~$0.001 |
-| **Total Hourly** | | **~$2.31** |
+| **Total Hourly** | | **~$4.32** |
 
 ### Daily/Monthly Estimates
 
 | Usage Pattern | Cost |
 |--------------|------|
-| 8-hour development day | ~$18.50 |
-| Monthly (8 hrs/day, 22 days) | ~$407 |
-| 24/7 operation | ~$1,680/month |
+| 8-hour development day | ~$34.50 |
+| Monthly (8 hrs/day, 22 days) | ~$760 |
+| 24/7 operation | ~$3,100/month |
+
+See [150 WPS Benchmark Presentation](docs/150-wps-benchmark-presentation.md) for detailed cost breakdown including DSQL DPU costs.
 
 ### Cost Optimization Tips
 
@@ -758,7 +762,7 @@ curl -G --data-urlencode 'query=temporal_workflow_completed_total' \
 | temporal_admin_tools_image | Admin tools Docker image URI | string | - | yes |
 | dsql_cluster_endpoint | Aurora DSQL cluster endpoint | string | - | yes |
 | dsql_cluster_arn | Aurora DSQL cluster ARN | string | - | yes |
-| ec2_instance_type | EC2 instance type (ARM64) | string | "m7g.xlarge" | no |
+| ec2_instance_type | EC2 instance type (ARM64) | string | "m7g.2xlarge" | no |
 | ec2_instance_count | Number of EC2 instances | number | 10 | no |
 | temporal_history_cpu | History service CPU units | number | 4096 | no |
 | temporal_history_memory | History service memory MB | number | 8192 | no |

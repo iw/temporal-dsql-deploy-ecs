@@ -98,12 +98,15 @@ resource "aws_ecs_service" "benchmark_worker" {
   task_definition = aws_ecs_task_definition.benchmark_worker.arn
   desired_count   = var.benchmark_worker_count
 
-  # Use EC2 capacity provider
+  # Use dedicated benchmark capacity provider (scale-from-zero)
   capacity_provider_strategy {
-    capacity_provider = aws_ecs_capacity_provider.ec2.name
+    capacity_provider = aws_ecs_capacity_provider.benchmark.name
     weight            = 1
     base              = 0
   }
+
+  # Force new deployment when changing capacity provider
+  force_new_deployment = true
 
   enable_execute_command = true
 

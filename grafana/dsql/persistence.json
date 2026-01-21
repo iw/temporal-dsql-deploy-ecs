@@ -120,8 +120,33 @@
         { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(dsql_pool_wait_duration_bucket[5m])))", "legendFormat": "wait p95" }
       ]
     },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Connection Closures by Reason",
+      "description": "Why connections are being closed. MaxLifetime = expected (55min rotation). MaxIdleTime/MaxIdle = should be 0 if pool configured correctly. If these increase but pool metrics don't show it, connections are being closed by server/network.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "showPoints": "never", "lineWidth": 2 }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "MaxLifetime" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "MaxIdleTime" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "MaxIdle" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(dsql_db_closed_max_lifetime_total)", "legendFormat": "MaxLifetime" },
+        { "refId": "B", "expr": "sum(dsql_db_closed_max_idle_time_total)", "legendFormat": "MaxIdleTime" },
+        { "refId": "C", "expr": "sum(dsql_db_closed_max_idle_total)", "legendFormat": "MaxIdle" }
+      ]
+    },
 
-    { "id": 9, "type": "row", "title": "Persistence Latency", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "collapsed": false, "panels": [] },
+    { "id": 9, "type": "row", "title": "Persistence Latency", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }, "collapsed": false, "panels": [] },
 
     {
       "id": 10,
@@ -129,7 +154,7 @@
       "title": "Persistence Latency by Operation",
       "description": "Database operation latency (p95). Rising latency cascades into workflow delays.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
       "targets": [{ "refId": "A", "expr": "topk(8, histogram_quantile(0.95, sum by (operation, le) (rate(persistence_latency_bucket[5m]))))", "legendFormat": "{{operation}}" }]
@@ -140,7 +165,7 @@
       "title": "Persistence Request Rate",
       "description": "Database operations per second by type.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean"] } },
       "targets": [{ "refId": "A", "expr": "topk(8, sum by (operation) (rate(persistence_requests_total[1m])))", "legendFormat": "{{operation}}" }]
@@ -152,7 +177,7 @@
       "title": "Persistence Errors",
       "description": "Database errors by type. Some errors trigger automatic retries.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 27 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 35 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } },
       "targets": [
@@ -161,13 +186,13 @@
       ]
     },
 
-    { "id": 13, "type": "row", "title": "Transaction Conflicts (OCC)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 }, "collapsed": false, "panels": [] },
+    { "id": 13, "type": "row", "title": "Transaction Conflicts (OCC)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 }, "collapsed": false, "panels": [] },
 
     {
       "id": 14,
       "type": "text",
       "title": "About Transaction Conflicts",
-      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 34 },
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 42 },
       "options": {
         "mode": "markdown",
         "content": "**Note**: These metrics only populate when transaction conflicts occur. Zero values indicate healthy operation with no contention. DSQL uses optimistic concurrency control (OCC) - conflicts are expected under high concurrent load and are automatically retried. Watch for **exhausted** (retries failed) which indicates severe contention."
@@ -180,7 +205,7 @@
       "title": "Conflict Rate",
       "description": "Transaction conflicts per second (SQLSTATE 40001). Some conflicts are normal under load.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 45 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 50 }] }, "noValue": "0" }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
       "targets": [{ "refId": "A", "expr": "sum(rate(dsql_tx_conflict_total[1m])) or vector(0)", "legendFormat": "conflicts/sec" }]
@@ -191,7 +216,7 @@
       "title": "Retry Rate",
       "description": "Automatic retries per second. Retries are expected and handled transparently.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 45 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 20 }, { "color": "red", "value": 100 }] }, "noValue": "0" }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
       "targets": [{ "refId": "A", "expr": "sum(rate(dsql_tx_retry_total[1m])) or vector(0)", "legendFormat": "retries/sec" }]
@@ -202,7 +227,7 @@
       "title": "Exhausted (Failures)",
       "description": "Transactions that failed after max retries. Should be zero. Non-zero = severe contention.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 45 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.1 }] }, "noValue": "0" }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
       "targets": [{ "refId": "A", "expr": "sum(rate(dsql_tx_exhausted_total[1m])) or vector(0)", "legendFormat": "exhausted/sec" }]
@@ -213,7 +238,7 @@
       "title": "Tx Latency p95",
       "description": "95th percentile transaction latency including retries.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 37 },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 45 },
       "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.1 }, { "color": "red", "value": 0.5 }] }, "noValue": "N/A" }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
       "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(dsql_tx_latency_bucket[5m])))", "legendFormat": "p95" }]
@@ -225,7 +250,7 @@
       "title": "Conflicts & Retries Over Time",
       "description": "Transaction conflicts and retries. Populated only when contention occurs.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
@@ -240,18 +265,18 @@
       "title": "Errors by Class",
       "description": "DSQL errors by classification. serialization_failure triggers retries.",
       "datasource": { "type": "prometheus", "uid": "amp" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } },
       "targets": [{ "refId": "A", "expr": "sum by (error_class) (rate(dsql_tx_error_class_total[1m]))", "legendFormat": "{{error_class}}" }]
     },
 
-    { "id": 21, "type": "row", "title": "CloudWatch Metrics (AWS)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 }, "collapsed": true, "panels": [
+    { "id": 21, "type": "row", "title": "CloudWatch Metrics (AWS)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 57 }, "collapsed": true, "panels": [
       {
         "id": 22,
         "type": "text",
         "title": "CloudWatch Setup",
-        "gridPos": { "h": 3, "w": 24, "x": 0, "y": 50 },
+        "gridPos": { "h": 3, "w": 24, "x": 0, "y": 58 },
         "options": {
           "mode": "markdown",
           "content": "**Setup Required**: Enter your DSQL cluster ID in the dashboard variable above. Ensure Grafana has CloudWatch IAM permissions (`cloudwatch:GetMetricData`). CloudWatch queries incur costs (~$5-15/month for a single cluster)."

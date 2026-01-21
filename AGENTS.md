@@ -8,7 +8,7 @@ Terraform infrastructure for deploying Temporal workflow engine on AWS ECS on EC
 
 - **Multi-service architecture**: 5 separate Temporal services (History, Matching, Frontend, Worker, UI) + Grafana + ADOT Collector
 - **ECS Service Connect**: Modern service mesh with Envoy sidecar for inter-service communication
-- **ECS on EC2 with Graviton**: 10x m7g.xlarge instances with ECS managed placement for stable IPs and cluster membership
+- **ECS on EC2 with Graviton**: 10x m7g.2xlarge instances with ECS managed placement for stable IPs and cluster membership
 - **Private-only networking**: No public subnets, VPC endpoints for AWS services
 - **Aurora DSQL**: Serverless PostgreSQL-compatible persistence with IAM authentication
 - **OpenSearch Provisioned**: 3-node m6g.large.search cluster for visibility
@@ -145,6 +145,7 @@ temporal-dsql-deploy-ecs/
 | `setup-grafana-secret.sh` | Generate Grafana admin password and create secret in Secrets Manager (one-time, idempotent) |
 | `setup-schema.sh` | Initialize DSQL schema using temporal-dsql-tool (accepts --endpoint or --from-terraform) |
 | `setup-opensearch.sh` | Create OpenSearch visibility index |
+| `scale-benchmark-workers.sh` | Scale benchmark workers up/down (separate from main services) |
 
 ### Benchmark Runner
 
@@ -230,7 +231,7 @@ No public subnets or internet-facing resources:
 
 ### 4. Graviton (ARM64) on EC2
 
-All ECS tasks run on Graviton-based m7g.xlarge EC2 instances:
+All ECS tasks run on Graviton-based m7g.2xlarge EC2 instances:
 - 20-40% cost savings over x86 instances
 - Stable IPs for Temporal's ringpop cluster membership
 - Default 10 instances for 150 WPS workloads (configurable)
@@ -244,7 +245,7 @@ Services are distributed across EC2 instances using ECS spread placement:
 - No workload-specific placement constraints
 - ECS automatically places tasks based on available resources
 
-**150 WPS Configuration** (10x m7g.xlarge = 40 vCPUs, 160 GiB RAM):
+**150 WPS Configuration** (10x m7g.2xlarge = 80 vCPUs, 320 GiB RAM):
 - **History**: 8 replicas (4 vCPU, 8 GiB each, 4096 shards)
 - **Matching**: 6 replicas (1 vCPU, 2 GiB each)
 - **Frontend**: 4 replicas (2 vCPU, 4 GiB each)
@@ -253,7 +254,7 @@ Services are distributed across EC2 instances using ECS spread placement:
 - **Grafana**: 1 replica (0.25 vCPU, 512 MiB)
 - **ADOT**: 1 replica (0.5 vCPU, 1 GiB)
 
-**100 WPS Configuration** (6x m7g.xlarge = 24 vCPUs, 96 GiB RAM):
+**100 WPS Configuration** (6x m7g.2xlarge = 48 vCPUs, 192 GiB RAM):
 - **History**: 6 replicas (2 vCPU, 8 GiB each)
 - **Matching**: 4 replicas (1 vCPU, 4 GiB each)
 - **Frontend**: 3 replicas (1 vCPU, 4 GiB each)
@@ -266,7 +267,75 @@ Aurora DSQL uses IAM authentication exclusively:
 - Task role has `dsql:DbConnect` and `dsql:DbConnectAdmin` permissions
 - Credentials generated automatically via IAM
 
-### 6a. DSQL Connection Rate Limiting
+### 6a. DSQL Connection Pool Configuration
+
+**FUNDAMENTAL REQUIREMENT: The connection pool MUST always be at maximum size.**
+
+**Why this matters - DSQL Connection Rate Limit:**
+DSQL has a **cluster-wide connection rate limit of 100 connections/second**. If the pool decays and needs to grow under load:
+- Multiple services compete for the 100/sec budget
+- Requests queue waiting for connections
+- Rate limit errors (`SQLSTATE 53400`) cause failures
+- Cascade failures as services retry and consume more budget
+
+By keeping the pool at max size at all times, we eliminate connection creation under load entirely.
+
+**Requirements:**
+1. **Pool must be pre-warmed to max size at startup**
+2. **Pool must remain at max size indefinitely** (no idle timeout decay)
+3. **Connections only replaced when they hit MaxConnLifetime** (one-by-one, rate-limited)
+
+**Authoritative Defaults** (defined in `temporal-dsql/common/persistence/sql/sqlplugin/dsql/session/session.go`):
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| `MaxConns` | 50 | Maximum open connections per pool |
+| `MaxIdleConns` | 50 | **MUST equal MaxConns** - prevents idle connection closure |
+| `MaxConnLifetime` | 55 minutes | Under DSQL's 60 minute limit |
+| `MaxConnIdleTime` | **0 (disabled)** | **CRITICAL: Must be 0 to prevent pool decay** |
+
+**Why MaxConnIdleTime must be 0:**
+Go's `database/sql` closes connections that have been idle longer than `MaxConnIdleTime`. Even with `MaxIdleConns = MaxConns`, idle connections are still closed after this timeout. Setting it to 0 disables this behavior entirely, ensuring the pool stays at max size.
+
+**Pool Pre-Warming** (defined in `temporal-dsql/common/persistence/sql/sqlplugin/dsql/pool_warmup.go`):
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| `TargetConnections` | 50 | Matches MaxConns - pool starts fully warmed |
+| `MaxRetries` | 5 | Retry failed connections |
+| `RetryBackoff` | 200ms | Initial backoff with jitter |
+| `MaxBackoff` | 5 seconds | Cap on exponential backoff |
+| `ConnectionTimeout` | 10 seconds | Per-connection timeout |
+
+Warmup creates connections **sequentially** (not in batches) for reliability:
+- Each connection has its own 10-second timeout
+- Failed connections retry with exponential backoff + jitter (50-150%)
+- No overall timeout - completes all 50 connections reliably
+- Prevents thundering herd during cluster-wide restarts
+
+**Environment Variable Overrides** (set in Terraform task definitions):
+
+```hcl
+{ name = "TEMPORAL_SQL_MAX_CONNS", value = "50" },
+{ name = "TEMPORAL_SQL_MAX_IDLE_CONNS", value = "50" },
+{ name = "TEMPORAL_SQL_CONNECTION_TIMEOUT", value = "30s" },
+{ name = "TEMPORAL_SQL_MAX_CONN_LIFETIME", value = "55m" },
+```
+
+**Connection Pool Lifecycle:**
+1. **Startup**: Pool warmup creates 50 connections synchronously (rate-limited)
+2. **Steady state**: All 50 connections remain open (no idle decay)
+3. **After 55 minutes**: Connections are replaced one-by-one as they hit MaxConnLifetime
+4. **Under load**: No new connections needed - pool is always ready
+
+**Pool Warmup Logging:**
+On startup, look for these log messages:
+- `"Starting DSQL pool warmup"` with `target_connections=50`
+- `"DSQL pool warmup complete"` with `connections_created=50`, `connections_failed=0`
+
+If warmup logs are missing, the pool will grow on-demand causing rate limit pressure and latency spikes.
+
+### 6b. DSQL Connection Rate Limiting
 
 DSQL has cluster-wide connection limits that must be respected across all service instances:
 - **100 connections/sec** cluster-wide rate limit
@@ -302,7 +371,7 @@ Service-specific limits are configured in each task definition to partition the 
 
 This ensures the cluster-wide 100/sec limit is respected even during rolling deployments or scaling events. Staggered startup adds a random 0-5s delay on first connection to prevent thundering herd during service restarts.
 
-### 6b. Distributed Rate Limiting (DynamoDB-backed)
+### 6c. Distributed Rate Limiting (DynamoDB-backed)
 
 For cluster-wide coordination of DSQL connection rate limiting across all service instances, a DynamoDB-backed distributed rate limiter is available:
 
@@ -481,43 +550,49 @@ After pushing new images to ECR, force new deployments:
 
 ## Benchmark Results (January 2026)
 
-### 100 WPS Benchmark
+### 150 WPS Benchmark
 
 Configuration:
-- **History**: 6 replicas (2 vCPU, 8 GiB each)
-- **Matching**: 4 replicas (1 vCPU, 4 GiB each)
-- **Frontend**: 3 replicas (1 vCPU, 4 GiB each)
-- **Worker**: 2 replicas (1 vCPU, 4 GiB each)
-- **Benchmark Workers**: 4 replicas (2 vCPU, 4 GiB each)
+- **History**: 8 replicas (4 vCPU, 8 GiB each)
+- **Matching**: 6 replicas (1 vCPU, 2 GiB each)
+- **Frontend**: 4 replicas (2 vCPU, 4 GiB each)
+- **Worker**: 2 replicas (0.5 vCPU, 1 GiB each)
+- **Benchmark Workers**: 6 replicas (2 vCPU, 4 GiB each)
+- **Infrastructure**: 10x m7g.2xlarge (main) + 4x m7g.2xlarge (benchmark)
 
 Results:
 
 | Metric | Value |
 |--------|-------|
-| Workflows Started | 28,348 |
-| Workflows Completed | 28,348 (100%) |
-| Actual Rate | 91.5 WPS |
-| P50 Latency | 239 ms |
-| P95 Latency | 3,700 ms |
-| P99 Latency | 11,456 ms |
-| Max Latency | 33,181 ms |
+| Target Rate | 150 WPS |
+| Actual Rate | 136.74 WPS |
+| Workflows Started | 41,052 |
+| Workflows Completed | 41,052 (100%) |
+| P50 Latency | 197 ms |
+| P95 Latency | 220 ms |
+| P99 Latency | 259 ms |
+| Max Latency | 594 ms |
+
+### DSQL Metrics During Benchmark
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Database Connections | ~1,000 | Stable throughout test |
+| TotalTx | 272,000/min | Peak transaction rate |
+| ReadOnlyTx | 193,000/min | 71% of total |
+| WriteTx | ~79,000/min | 29% of total |
 
 ### Key Findings
 
-1. **Connection Rate Limiting Fix Validated**: The fix to integrate rate limiting into `tokenRefreshingDriver.Open()` eliminated the cascade failures seen in earlier benchmarks. No `SQLSTATE 53400` (connection rate exceeded) errors.
+1. **100% Workflow Completion**: All 41,052 workflows completed successfully with zero failures.
 
-2. **100% Workflow Completion**: All 28,348 workflows completed successfully with no failures or lost workflows.
+2. **Sub-300ms P99 Latency**: Excellent tail latency under sustained 137 WPS load.
 
-3. **P50 Latency Excellent**: Sub-second latency for typical workflows indicates the system handles normal load well.
+3. **Stable Connection Pool**: ~1,000 connections pre-warmed and maintained throughout test.
 
-4. **P99 Tail Latency Needs Tuning**: The 11.4s P99 latency exceeds the 5s threshold. This is likely due to DSQL's optimistic concurrency control causing retries under high contention.
+4. **No OCC Retry Storms**: GetWorkflowExecution optimization eliminated unnecessary FOR UPDATE locks.
 
-### Areas for Future Optimization
-
-- Increase history shards for better parallelism
-- Tune DSQL connection pool settings
-- Investigate OCC conflict patterns during high load
-- Consider distributed rate limiting (see Open Questions in temporal-dsql AGENTS.md)
+5. **Clean Tail Latency**: Max latency under 600ms indicates no cascade failures.
 
 ## References
 

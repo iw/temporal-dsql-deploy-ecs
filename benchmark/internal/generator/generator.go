@@ -195,6 +195,9 @@ func (g *generator) runGenerator(ctx context.Context) {
 	startTime := time.Now()
 	endTime := startTime.Add(g.cfg.Duration)
 
+	// Generate a run ID for this benchmark run (timestamp-based for uniqueness)
+	runID := startTime.Format("20060102-150405")
+
 	// Initialize ramp-up controller
 	g.rampController = NewRampUpController(g.targetRate, g.cfg.RampUpDuration)
 	g.rampController.ResetAt(startTime)
@@ -216,7 +219,7 @@ func (g *generator) runGenerator(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			if now.After(endTime) {
-				log.Println("Generator stopping: duration reached")
+				log.Println("Benchmark duration completed")
 				return
 			}
 
@@ -231,8 +234,8 @@ func (g *generator) runGenerator(ctx context.Context) {
 				lastRate = currentRate
 			}
 
-			// Start workflow
-			workflowID := fmt.Sprintf("benchmark-%s-%d", g.cfg.WorkflowType, workflowCounter.Add(1))
+			// Start workflow with unique ID: <type>-<runID>-<counter>
+			workflowID := fmt.Sprintf("%s-%s-%d", g.cfg.WorkflowType, runID, workflowCounter.Add(1))
 			g.wg.Add(1)
 			go g.startWorkflow(ctx, workflowID)
 		}

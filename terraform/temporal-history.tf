@@ -84,10 +84,12 @@ resource "aws_ecs_task_definition" "temporal_history" {
         { name = "TEMPORAL_SQL_IAM_AUTH", value = "true" },
 
         # DSQL Connection Pool Settings (optimized for serverless)
-        { name = "TEMPORAL_SQL_MAX_CONNS", value = "20" },
-        { name = "TEMPORAL_SQL_MAX_IDLE_CONNS", value = "5" },
+        # Pool pre-warming fills to MaxConns on startup
+        # MaxIdleConns should match MaxConns to avoid connection churn
+        { name = "TEMPORAL_SQL_MAX_CONNS", value = "50" },
+        { name = "TEMPORAL_SQL_MAX_IDLE_CONNS", value = "50" },
         { name = "TEMPORAL_SQL_CONNECTION_TIMEOUT", value = "30s" },
-        { name = "TEMPORAL_SQL_MAX_CONN_LIFETIME", value = "300s" },
+        { name = "TEMPORAL_SQL_MAX_CONN_LIFETIME", value = "55m" },
 
         # DSQL Connection Rate Limiting
         # History has highest DB load - allocate more of the 100/sec cluster limit

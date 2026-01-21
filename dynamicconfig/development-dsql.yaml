@@ -43,14 +43,20 @@ frontend.persistenceMaxQPS:
     constraints: {}
 
 # DSQL connection pool settings (per service instance)
-# 4 history × 50 conns = 200 total history connections
-# Total across all services: ~400-500 connections to DSQL
+# With pool pre-warming and increased defaults:
+# - 8 history × 50 conns = 400 total history connections
+# - 6 matching × 50 conns = 300 total matching connections
+# - 4 frontend × 50 conns = 200 total frontend connections
+# - 2 worker × 50 conns = 100 total worker connections
+# Total across all services: ~1000 connections to DSQL (well under 10K limit)
 persistence.maxConns:
   - value: 50
     constraints: {}
 
+# Match maxIdleConns to maxConns to avoid connection churn
+# When idle connections exceed this limit, they are closed immediately
 persistence.maxIdleConns:
-  - value: 25
+  - value: 50
     constraints: {}
 
 # DSQL transaction size limit (4MB)
@@ -122,9 +128,31 @@ history.replicationTaskProcessorMaxPollRPS:
   - value: 100
     constraints: {}
 
-# Cache settings for high shard count
-history.historyCacheMaxSize:
-  - value: 512
+# =============================================================================
+# History Cache Settings (CRITICAL for performance)
+# =============================================================================
+
+# Use size-based cache limiting instead of entry count
+# This allows more efficient memory utilization for varying workflow sizes
+history.cacheSizeBasedLimit:
+  - value: true
+    constraints: {}
+
+# Max cache size per history host: 1GB
+# With 8 history replicas = 8GB total cache capacity
+# This is critical for reducing GetWorkflowExecution calls
+history.hostLevelCacheMaxSizeBytes:
+  - value: 1073741824
+    constraints: {}
+
+# Cache TTL: 1 hour (default)
+history.cacheTTL:
+  - value: 1h
+    constraints: {}
+
+# Non-user context lock timeout
+history.cacheNonUserContextLockTimeout:
+  - value: 500ms
     constraints: {}
 
 history.historyShardControllerMaxConcurrentAcquires:
@@ -144,40 +172,40 @@ history.defaultActivityRetryPolicy:
 # Matching Service Settings
 # =============================================================================
 
-# Task queue partitions - increased for production throughput
+# Task queue partitions - increased for 150 WPS throughput
 # More partitions = better parallelism for high-volume task queues
 matching.numTaskqueueWritePartitions:
-  - value: 16
+  - value: 32
     constraints: {}
 
 matching.numTaskqueueReadPartitions:
-  - value: 16
+  - value: 32
     constraints: {}
 
-# Matching service throughput settings
+# Matching service throughput settings - tuned for 150 WPS
 matching.maxTaskBatchSize:
-  - value: 100
+  - value: 200
     constraints: {}
 
 matching.getTasksBatchSize:
-  - value: 1000
+  - value: 2000
     constraints: {}
 
 matching.longPollExpirationInterval:
   - value: 60s
     constraints: {}
 
-# Forwarder settings for multi-partition task queues - tuned for 75+ WPS
+# Forwarder settings for multi-partition task queues - tuned for 150 WPS
 matching.forwarderMaxOutstandingPolls:
-  - value: 20
+  - value: 40
     constraints: {}
 
 matching.forwarderMaxOutstandingTasks:
-  - value: 200
+  - value: 400
     constraints: {}
 
 matching.forwarderMaxRatePerSecond:
-  - value: 200
+  - value: 400
     constraints: {}
 
 matching.enableTaskInfoLogByDomainID:
@@ -192,17 +220,17 @@ frontend.enableClientVersionCheck:
   - value: true
     constraints: {}
 
-# Rate limiting - tuned for 75+ WPS (increased from 2400)
+# Rate limiting - tuned for 150 WPS
 frontend.rps:
-  - value: 4000
+  - value: 8000
     constraints: {}
 
 frontend.namespaceRPS:
-  - value: 4000
+  - value: 8000
     constraints: {}
 
 frontend.namespaceCount:
-  - value: 2000
+  - value: 4000
     constraints: {}
 
 # Visibility rate limits
