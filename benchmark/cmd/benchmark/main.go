@@ -84,14 +84,37 @@ func run(ctx context.Context) error {
 	// Create SDK metrics handler once - will be reused for all clients
 	sdkMetricsHandler := metrics.SDKMetricsHandler(metricsHandler.Registry())
 
-	// Create Temporal client with SDK metrics
+	// Create Temporal client with SDK metrics and retry logic
 	log.Printf("Connecting to Temporal at %s...", cfg.TemporalAddress)
-	temporalClient, err := client.Dial(client.Options{
-		HostPort:       cfg.TemporalAddress,
-		MetricsHandler: sdkMetricsHandler,
-	})
+
+	var temporalClient client.Client
+	maxRetries := 30
+	retryDelay := 2 * time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		// Check for cancellation before each retry
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("shutdown requested during connection retry")
+		default:
+		}
+
+		temporalClient, err = client.Dial(client.Options{
+			HostPort:       cfg.TemporalAddress,
+			MetricsHandler: sdkMetricsHandler,
+		})
+		if err == nil {
+			break
+		}
+
+		if i < maxRetries-1 {
+			log.Printf("Connection attempt %d/%d failed: %v. Retrying in %v...", i+1, maxRetries, err, retryDelay)
+			time.Sleep(retryDelay)
+		}
+	}
+
 	if err != nil {
-		return fmt.Errorf("failed to connect to Temporal cluster at %s: %w (cluster may be unhealthy)", cfg.TemporalAddress, err)
+		return fmt.Errorf("failed to connect to Temporal cluster at %s after %d attempts: %w", cfg.TemporalAddress, maxRetries, err)
 	}
 	defer temporalClient.Close()
 
@@ -191,12 +214,14 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClie
 	defer nsClient.Close()
 
 	// Create worker with high-throughput settings
+	// Increased pollers from 16 to 32 to address workflow task processing bottleneck
+	// observed in 6k st/s benchmark (server adding ~350 tasks/sec but only ~70/sec processed)
 	workerOptions := worker.Options{
 		MaxConcurrentActivityExecutionSize:      200,
 		MaxConcurrentWorkflowTaskExecutionSize:  200,
 		MaxConcurrentLocalActivityExecutionSize: 200,
-		MaxConcurrentWorkflowTaskPollers:        16,
-		MaxConcurrentActivityTaskPollers:        16,
+		MaxConcurrentWorkflowTaskPollers:        32,
+		MaxConcurrentActivityTaskPollers:        32,
 		DisableEagerActivities:                  false,
 		MaxConcurrentEagerActivityExecutionSize: 100,
 		StickyScheduleToStartTimeout:            5 * time.Second,

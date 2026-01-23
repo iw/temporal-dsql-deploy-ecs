@@ -4,10 +4,20 @@ set -euo pipefail
 # Scale benchmark workers up or down
 #
 # Usage:
-#   ./scripts/scale-benchmark-workers.sh up [count]     # Scale up (default: 6)
+#   ./scripts/scale-benchmark-workers.sh up [count]     # Scale up (default: 30)
 #   ./scripts/scale-benchmark-workers.sh down           # Scale to 0
 #   ./scripts/scale-benchmark-workers.sh status         # Show current status
 #   ./scripts/scale-benchmark-workers.sh --from-terraform up [count]
+#
+# Resource Planning (with 384 vCPU quota, 380 usable):
+#   Main cluster:     10 x m8g.4xlarge = 160 vCPU (Temporal services)
+#   Benchmark cluster: 13 x m8g.4xlarge = 208 vCPU (1 generator + 51 workers)
+#   Total: 368 vCPU (12 vCPU headroom)
+#
+# Worker Recommendations:
+#   --wps 100:  30 workers (960 pollers)
+#   --wps 200:  40 workers (1,280 pollers)
+#   --wps 400:  51 workers (1,632 pollers) - max with current quota
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -18,7 +28,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Defaults
-DEFAULT_COUNT=6
+DEFAULT_COUNT=30
 REGION="eu-west-1"
 CLUSTER_NAME=""
 SERVICE_NAME=""

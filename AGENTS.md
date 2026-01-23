@@ -170,25 +170,47 @@ The benchmark system uses a separated generator/worker architecture:
 This separation allows independent scaling of workers to handle high WPS loads without resource contention.
 
 **Generator Task Resources:**
-- **CPU**: 1024 (1 vCPU) - Sufficient for workflow submission
-- **Memory**: 2048 MB (2 GB)
+- **CPU**: 4096 (4 vCPU) - For workflow submission
+- **Memory**: 8192 MB (8 GB)
 - Runs as a one-shot task, exits after benchmark duration + completion timeout
 
 **Worker Service Resources:**
-- **CPU**: 2048 (2 vCPU) per worker
+- **CPU**: 4096 (4 vCPU) per worker
 - **Memory**: 4096 MB (4 GB) per worker
 - **Replicas**: Configurable via `benchmark_worker_count` (default: 0, scale up for benchmarks)
+- **Max workers**: 51 (with 384 vCPU quota, 13 benchmark instances)
 - Runs with `BENCHMARK_WORKER_ONLY=true` to only process workflows
+
+**Resource Planning (384 vCPU quota, 380 usable):**
+
+| Cluster | Instances | vCPU | Purpose |
+|---------|-----------|------|---------|
+| Main | 10 × m8g.4xlarge | 160 | Temporal services |
+| Benchmark | 13 × m8g.4xlarge | 208 | 1 generator (4 vCPU) + 51 workers (204 vCPU) |
+| **Total** | **23** | **368** | 12 vCPU headroom |
+
+**Worker Scaling Recommendations:**
+
+| Target WPS | Workers | Pollers | Notes |
+|------------|---------|---------|-------|
+| 100 | 30 | 960 | Conservative |
+| 200 | 40 | 1,280 | Moderate |
+| 400 | 51 | 1,632 | Max with current quota |
 
 **Worker Configuration** (optimized for high throughput):
 - `MaxConcurrentActivityExecutionSize`: 200
 - `MaxConcurrentWorkflowTaskExecutionSize`: 200
 - `MaxConcurrentLocalActivityExecutionSize`: 200
-- `MaxConcurrentWorkflowTaskPollers`: 16
-- `MaxConcurrentActivityTaskPollers`: 16
+- `MaxConcurrentWorkflowTaskPollers`: 32 (increased from 16 to address workflow task bottleneck)
+- `MaxConcurrentActivityTaskPollers`: 32 (increased from 16)
 - `MaxConcurrentEagerActivityExecutionSize`: 100 (eager activities for lower latency)
 - `DisableEagerActivities`: false (enabled for faster activity dispatch)
 - `StickyScheduleToStartTimeout`: 5s (workflow state caching)
+
+**Workflow Task Bottleneck (6k st/s benchmark finding):**
+- Server adds ~350 workflow tasks/sec but workers only processed ~70/sec with 8 workers × 16 pollers
+- Increased pollers to 32 per worker to improve workflow task throughput
+- For 6k st/s turbo config: use 16 workers × 32 pollers = 512 total pollers
 
 **Server-Side Requirements for Worker Optimizations:**
 - `system.enableActivityEagerExecution: true` - Required for eager activities (default: false)
@@ -513,6 +535,8 @@ After deployment:
 2. Check service has correct `service_connect_configuration`
 3. Verify port names match between task definition and service config
 4. Check Envoy sidecar logs in CloudWatch
+
+**Note:** The Service Connect sidecar (`ecs-service-connect-agent`) is injected at runtime by ECS, not defined in the task definition. You cannot use `dependsOn` to wait for it. Instead, applications must implement connection retry logic to handle the brief window where DNS resolution may fail during startup. The benchmark worker already has this retry logic in `benchmark/cmd/benchmark/main.go`.
 
 ### Crash Loop Recovery (Ringpop Issues)
 

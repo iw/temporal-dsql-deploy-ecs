@@ -10,10 +10,11 @@ import (
 
 // Valid workflow types
 const (
-	WorkflowTypeSimple        = "simple"
-	WorkflowTypeMultiActivity = "multi-activity"
-	WorkflowTypeTimer         = "timer"
-	WorkflowTypeChildWorkflow = "child-workflow"
+	WorkflowTypeSimple           = "simple"
+	WorkflowTypeMultiActivity    = "multi-activity"
+	WorkflowTypeTimer            = "timer"
+	WorkflowTypeChildWorkflow    = "child-workflow"
+	WorkflowTypeStateTransitions = "state-transitions"
 )
 
 // Configuration limits
@@ -215,10 +216,10 @@ func LoadFromEnv() (BenchmarkConfig, error) {
 func (c *BenchmarkConfig) Validate() error {
 	// Validate workflow type
 	switch c.WorkflowType {
-	case WorkflowTypeSimple, WorkflowTypeMultiActivity, WorkflowTypeTimer, WorkflowTypeChildWorkflow:
+	case WorkflowTypeSimple, WorkflowTypeMultiActivity, WorkflowTypeTimer, WorkflowTypeChildWorkflow, WorkflowTypeStateTransitions:
 		// valid
 	default:
-		return fmt.Errorf("invalid workflow type %q: must be one of: simple, multi-activity, timer, child-workflow", c.WorkflowType)
+		return fmt.Errorf("invalid workflow type %q: must be one of: simple, multi-activity, timer, child-workflow, state-transitions", c.WorkflowType)
 	}
 
 	// Validate activity count
@@ -292,5 +293,6 @@ func ValidWorkflowTypes() []string {
 		WorkflowTypeMultiActivity,
 		WorkflowTypeTimer,
 		WorkflowTypeChildWorkflow,
+		WorkflowTypeStateTransitions,
 	}
 }

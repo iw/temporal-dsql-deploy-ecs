@@ -2,11 +2,19 @@
 package metrics
 
 import (
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.temporal.io/sdk/client"
 )
+
+// SDKMetricsHandler returns a Temporal SDK metrics handler that properly captures
+// all SDK metrics including temporal_worker_task_slots_* gauges.
+func SDKMetricsHandler(registry *prometheus.Registry) client.MetricsHandler {
+	return newPrometheusMetricsHandler(registry)
+}
 
 // prometheusMetricsHandler implements client.MetricsHandler for Temporal SDK metrics.
 // It exposes SDK metrics on the same Prometheus endpoint as benchmark metrics.
@@ -14,69 +22,58 @@ type prometheusMetricsHandler struct {
 	registry *prometheus.Registry
 	tags     map[string]string
 
+	// Mutex for thread-safe gauge registration
+	mu sync.RWMutex
+
+	// Dynamic gauge registry - gauges are created on demand
+	gauges map[string]*prometheus.GaugeVec
+
 	// SDK metrics - these match the Temporal SDK metric names
-	// Requirement 3.1.2: temporal_request_latency
-	requestLatency *prometheus.HistogramVec
-
-	// Requirement 3.1.3: temporal_workflow_task_schedule_to_start_latency
+	requestLatency                     *prometheus.HistogramVec
 	workflowTaskScheduleToStartLatency *prometheus.HistogramVec
-
-	// Requirement 3.1.4: temporal_activity_task_schedule_to_start_latency
 	activityTaskScheduleToStartLatency *prometheus.HistogramVec
-
-	// Requirement 3.1.5: temporal_workflow_endtoend_latency
-	workflowEndToEndLatency *prometheus.HistogramVec
-
-	// Requirement 3.1.6: temporal_long_request
-	longRequest *prometheus.CounterVec
-
-	// Requirement 3.1.7: temporal_request_failure
-	requestFailure *prometheus.CounterVec
+	workflowEndToEndLatency            *prometheus.HistogramVec
+	longRequest                        *prometheus.CounterVec
+	requestFailure                     *prometheus.CounterVec
 }
 
-// NewPrometheusMetricsHandler creates a new Temporal SDK metrics handler.
-// It registers SDK metrics with the provided Prometheus registry.
-func NewPrometheusMetricsHandler(registry *prometheus.Registry) client.MetricsHandler {
+// newPrometheusMetricsHandler creates a new Temporal SDK metrics handler.
+func newPrometheusMetricsHandler(registry *prometheus.Registry) client.MetricsHandler {
 	h := &prometheusMetricsHandler{
 		registry: registry,
 		tags:     make(map[string]string),
+		gauges:   make(map[string]*prometheus.GaugeVec),
 	}
 
-	// Requirement 3.1.2: temporal_request_latency for all Temporal API calls
 	h.requestLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "temporal_request_latency_seconds",
 		Help:    "Latency of Temporal API requests in seconds",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15), // 1ms to ~16s
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
 	}, []string{"operation", "namespace"})
 
-	// Requirement 3.1.3: temporal_workflow_task_schedule_to_start_latency
 	h.workflowTaskScheduleToStartLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "temporal_workflow_task_schedule_to_start_latency_seconds",
 		Help:    "Time from workflow task scheduling to start in seconds",
 		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
 	}, []string{"namespace", "task_queue"})
 
-	// Requirement 3.1.4: temporal_activity_task_schedule_to_start_latency
 	h.activityTaskScheduleToStartLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "temporal_activity_task_schedule_to_start_latency_seconds",
 		Help:    "Time from activity task scheduling to start in seconds",
 		Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
 	}, []string{"namespace", "task_queue"})
 
-	// Requirement 3.1.5: temporal_workflow_endtoend_latency
 	h.workflowEndToEndLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "temporal_workflow_endtoend_latency_seconds",
 		Help:    "End-to-end workflow execution latency in seconds",
-		Buckets: prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms to ~500s
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 20),
 	}, []string{"namespace", "workflow_type"})
 
-	// Requirement 3.1.6: temporal_long_request for requests exceeding thresholds
 	h.longRequest = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "temporal_long_request_total",
 		Help: "Count of long-running Temporal requests",
 	}, []string{"operation", "namespace"})
 
-	// Requirement 3.1.7: temporal_request_failure with failure type labels
 	h.requestFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "temporal_request_failure_total",
 		Help: "Count of failed Temporal requests by failure type",
@@ -93,10 +90,41 @@ func NewPrometheusMetricsHandler(registry *prometheus.Registry) client.MetricsHa
 	return h
 }
 
+// getOrCreateGauge returns an existing gauge or creates a new one.
+func (h *prometheusMetricsHandler) getOrCreateGauge(name string, labelNames []string) *prometheus.GaugeVec {
+	h.mu.RLock()
+	if gauge, ok := h.gauges[name]; ok {
+		h.mu.RUnlock()
+		return gauge
+	}
+	h.mu.RUnlock()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if gauge, ok := h.gauges[name]; ok {
+		return gauge
+	}
+
+	gauge := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: name,
+		Help: "Temporal SDK gauge: " + name,
+	}, labelNames)
+
+	// Try to register, ignore if already registered
+	if err := h.registry.Register(gauge); err != nil {
+		if existing, ok := h.gauges[name]; ok {
+			return existing
+		}
+	}
+
+	h.gauges[name] = gauge
+	return gauge
+}
+
 // WithTags returns a new handler with the given tags.
-// This is part of the client.MetricsHandler interface.
 func (h *prometheusMetricsHandler) WithTags(tags map[string]string) client.MetricsHandler {
-	// Create a new handler with merged tags
 	newTags := make(map[string]string)
 	for k, v := range h.tags {
 		newTags[k] = v
@@ -108,6 +136,8 @@ func (h *prometheusMetricsHandler) WithTags(tags map[string]string) client.Metri
 	return &prometheusMetricsHandler{
 		registry:                           h.registry,
 		tags:                               newTags,
+		gauges:                             h.gauges,
+		mu:                                 sync.RWMutex{},
 		requestLatency:                     h.requestLatency,
 		workflowTaskScheduleToStartLatency: h.workflowTaskScheduleToStartLatency,
 		activityTaskScheduleToStartLatency: h.activityTaskScheduleToStartLatency,
@@ -118,33 +148,18 @@ func (h *prometheusMetricsHandler) WithTags(tags map[string]string) client.Metri
 }
 
 // Counter returns a counter for the given name.
-// This is part of the client.MetricsHandler interface.
 func (h *prometheusMetricsHandler) Counter(name string) client.MetricsCounter {
-	return &prometheusCounter{
-		handler: h,
-		name:    name,
-		tags:    h.tags,
-	}
+	return &prometheusCounter{handler: h, name: name, tags: h.tags}
 }
 
 // Gauge returns a gauge for the given name.
-// This is part of the client.MetricsHandler interface.
 func (h *prometheusMetricsHandler) Gauge(name string) client.MetricsGauge {
-	return &prometheusGauge{
-		handler: h,
-		name:    name,
-		tags:    h.tags,
-	}
+	return &prometheusGauge{handler: h, name: name, tags: h.tags}
 }
 
 // Timer returns a timer for the given name.
-// This is part of the client.MetricsHandler interface.
 func (h *prometheusMetricsHandler) Timer(name string) client.MetricsTimer {
-	return &prometheusTimer{
-		handler: h,
-		name:    name,
-		tags:    h.tags,
-	}
+	return &prometheusTimer{handler: h, name: name, tags: h.tags}
 }
 
 // prometheusCounter implements client.MetricsCounter.
@@ -168,10 +183,8 @@ func (c *prometheusCounter) Inc(delta int64) {
 }
 
 func (c *prometheusCounter) getTag(key, defaultValue string) string {
-	if c.tags != nil {
-		if v, ok := c.tags[key]; ok {
-			return v
-		}
+	if v, ok := c.tags[key]; ok {
+		return v
 	}
 	return defaultValue
 }
@@ -184,7 +197,27 @@ type prometheusGauge struct {
 }
 
 func (g *prometheusGauge) Update(value float64) {
-	// SDK gauges are not currently used in our metrics
+	// Build label names and values from tags
+	labelNames := make([]string, 0, len(g.tags))
+	for k := range g.tags {
+		labelNames = append(labelNames, k)
+	}
+	sort.Strings(labelNames) // Consistent ordering
+
+	labelValues := make([]string, 0, len(labelNames))
+	for _, k := range labelNames {
+		labelValues = append(labelValues, g.tags[k])
+	}
+
+	// Get or create the gauge with these labels
+	gauge := g.handler.getOrCreateGauge(g.name, labelNames)
+	if gauge != nil {
+		if len(labelValues) > 0 {
+			gauge.WithLabelValues(labelValues...).Set(value)
+		} else {
+			gauge.WithLabelValues().Set(value)
+		}
+	}
 }
 
 // prometheusTimer implements client.MetricsTimer.
@@ -204,7 +237,6 @@ func (t *prometheusTimer) Record(duration time.Duration) {
 	switch t.name {
 	case "temporal_request_latency", "temporal_request":
 		t.handler.requestLatency.WithLabelValues(operation, namespace).Observe(seconds)
-		// Check for long requests (> 1 second threshold)
 		if seconds > 1.0 {
 			t.handler.longRequest.WithLabelValues(operation, namespace).Inc()
 		}
@@ -218,10 +250,8 @@ func (t *prometheusTimer) Record(duration time.Duration) {
 }
 
 func (t *prometheusTimer) getTag(key, defaultValue string) string {
-	if t.tags != nil {
-		if v, ok := t.tags[key]; ok {
-			return v
-		}
+	if v, ok := t.tags[key]; ok {
+		return v
 	}
 	return defaultValue
 }

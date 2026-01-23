@@ -25,3 +25,25 @@ providers:
     allowUiUpdates: true
     options:
       path: /var/lib/grafana/dashboards/dsql
+
+  - name: 'Benchmark Analysis'
+    orgId: 1
+    folder: 'Benchmark'
+    folderUid: 'benchmark'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/bench
+
+  - name: 'Worker Performance'
+    orgId: 1
+    folder: 'Workers'
+    folderUid: 'workers'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/workers

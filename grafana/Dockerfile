@@ -15,6 +15,8 @@ COPY provisioning/ /etc/grafana/provisioning/
 # Copy dashboards
 COPY server/ /var/lib/grafana/dashboards/server/
 COPY dsql/ /var/lib/grafana/dashboards/dsql/
+COPY bench/ /var/lib/grafana/dashboards/bench/
+COPY workers/ /var/lib/grafana/dashboards/workers/
 
 # Copy entrypoint script for environment variable substitution
 COPY entrypoint.sh /entrypoint.sh

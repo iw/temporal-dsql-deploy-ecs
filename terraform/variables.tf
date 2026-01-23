@@ -112,9 +112,9 @@ variable "temporal_history_shards" {
 # -----------------------------------------------------------------------------
 
 variable "temporal_matching_cpu" {
-  description = "CPU units for Matching service (256, 512, 1024, 2048, 4096). Recommended: 1024 for most workloads"
+  description = "CPU units for Matching service (256, 512, 1024, 2048, 4096). Recommended: 2048 for high-activity workloads"
   type        = number
-  default     = 1024
+  default     = 2048
 
   validation {
     condition     = contains([256, 512, 1024, 2048, 4096], var.temporal_matching_cpu)
@@ -123,9 +123,9 @@ variable "temporal_matching_cpu" {
 }
 
 variable "temporal_matching_memory" {
-  description = "Memory in MB for Matching service (must be compatible with CPU value). Recommended: 2048 for most workloads"
+  description = "Memory in MB for Matching service (must be compatible with CPU value). Recommended: 4096 for high-activity workloads"
   type        = number
-  default     = 2048
+  default     = 4096
 
   validation {
     condition     = var.temporal_matching_memory >= 512 && var.temporal_matching_memory <= 30720
@@ -417,7 +417,7 @@ variable "ec2_instance_type" {
 }
 
 variable "ec2_instance_count" {
-  description = "Number of EC2 instances in the ECS cluster. Recommended: 6 for 100 WPS, 10 for 150 WPS"
+  description = "Number of EC2 instances in the ECS cluster. Recommended: 10 for 6k st/s golden config (14 History + 8 Matching + 6 Frontend + 3 Worker + UI/Grafana/ADOT = 34 tasks, needs 40 ENIs)"
   type        = number
   default     = 10
 
@@ -445,13 +445,13 @@ variable "benchmark_image" {
 }
 
 variable "benchmark_max_instances" {
-  description = "Maximum number of EC2 instances for benchmark workloads (scales from 0)"
+  description = "Maximum number of EC2 instances for benchmark workloads (scales from 0). 15 instances with m8g.4xlarge = 240 vCPU for 60 workers."
   type        = number
-  default     = 4
+  default     = 8
 
   validation {
-    condition     = var.benchmark_max_instances >= 1 && var.benchmark_max_instances <= 10
-    error_message = "Benchmark max instances must be between 1 and 10."
+    condition     = var.benchmark_max_instances >= 1 && var.benchmark_max_instances <= 20
+    error_message = "Benchmark max instances must be between 1 and 20."
   }
 }
 

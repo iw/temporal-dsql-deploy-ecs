@@ -1,0 +1,338 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Benchmark analysis dashboard for identifying performance bottlenecks during load testing. Shows per-replica metrics that aggregate views hide.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "iteration": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": ["temporal"],
+      "targetBlank": true,
+      "title": "Related Dashboards",
+      "type": "dashboards"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Benchmark Analysis Guide",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Benchmark Analysis Dashboard\n\nThis dashboard reveals bottlenecks that aggregate metrics hide. During the 200 WPS benchmark, aggregate pool utilization showed 27% (600/2200 connections) - but **6 out of 16 history replicas were at 100% pool exhaustion**, causing 7.7 minute connection wait times.\n\n**Key insight**: Always check per-replica metrics, not just cluster-wide aggregates.\n\n### Troubleshooting Flow\n1. **State Transitions** → Is the system doing work?\n2. **Per-Replica Pool Usage** → Are any replicas exhausted? (THE KEY METRIC)\n3. **Connection Wait Time** → Are requests queuing for connections?\n4. **Persistence Latency** → Is the database slow, or are we waiting for connections?\n\n**Healthy benchmark**: All replicas below 80% pool usage, connection wait near zero, persistence latency stable."
+      }
+    },
+
+    { "id": 2, "type": "row", "title": "Throughput Overview", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "State Transitions/sec",
+      "description": "How busy the workflow state machine is. NOT workflow completions - a single workflow generates many transitions.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_count[1m]))", "legendFormat": "st/s" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Workflow Starts/sec",
+      "description": "New workflows being started. Compare with target benchmark rate.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(service_requests_total{operation=\"StartWorkflowExecution\"}[1m]))", "legendFormat": "starts/s" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Workflow Completions/sec",
+      "description": "Workflows completing successfully. Should match starts during steady state.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(workflow_success_total[1m]))", "legendFormat": "completions/s" }]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "UpdateWorkflowExecution/sec",
+      "description": "Primary persistence operation. Each workflow task completion triggers this.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(persistence_requests_total{operation=\"UpdateWorkflowExecution\"}[1m]))", "legendFormat": "updates/s" }]
+    },
+
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "State Transitions Over Time",
+      "description": "Workflow state machine activity. Spikes indicate burst processing. Drops may indicate bottlenecks elsewhere.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(state_transition_count_count[1m]))", "legendFormat": "total st/s" },
+        { "refId": "B", "expr": "sum(rate(state_transition_count_count{service_name=~\"history.*\"}[1m]))", "legendFormat": "history st/s" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Workflow Lifecycle",
+      "description": "Workflow starts vs completions. Gap indicates in-flight workflows or processing delays.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(service_requests_total{operation=\"StartWorkflowExecution\"}[1m]))", "legendFormat": "starts/s" },
+        { "refId": "B", "expr": "sum(rate(workflow_success_total[1m]))", "legendFormat": "completions/s" }
+      ]
+    },
+
+    { "id": 10, "type": "row", "title": "Connection Pool - Per Replica (THE KEY METRICS)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 11,
+      "type": "text",
+      "title": "Why Per-Replica Matters",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 20 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Critical**: Aggregate pool metrics can hide per-replica exhaustion. In the 200 WPS benchmark, aggregate showed 27% utilization (600/2200) but 6 history replicas were at 100% (50/50), causing 7.7 minute connection waits. **Always check per-replica usage** - if ANY replica hits its limit, requests to that replica queue regardless of cluster-wide availability."
+      }
+    },
+
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "History Pool Usage - Per Replica",
+      "description": "Connections in use per history replica. If ANY line hits the pool max (default 100), that replica becomes a bottleneck. Uneven distribution indicates hot shards.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 23 },
+      "fieldConfig": { 
+        "defaults": { 
+          "unit": "short", 
+          "custom": { "showPoints": "never", "lineWidth": 1 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 80 }, { "color": "red", "value": 95 }] }
+        }, 
+        "overrides": [] 
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max"] } },
+      "targets": [{ "refId": "A", "expr": "max by (task_id) (dsql_pool_in_use{service_name=~\"history.*\"})", "legendFormat": "{{task_id}}" }]
+    },
+
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Max History Pool Usage",
+      "description": "Highest pool usage across all history replicas. If this hits 100, you have a bottleneck.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 33 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 80 }, { "color": "red", "value": 95 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["max"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "max(dsql_pool_in_use{service_name=~\"history.*\"})", "legendFormat": "max" }]
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Total History Connections",
+      "description": "Sum of connections in use across all history replicas.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 33 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(dsql_pool_in_use{service_name=~\"history.*\"})", "legendFormat": "total" }]
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "History Replicas at >80%",
+      "description": "Count of history replicas using more than 80% of their pool. Should be zero.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 33 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 3 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [{ "refId": "A", "expr": "count(dsql_pool_in_use{service_name=~\"history.*\"} / dsql_pool_max_open{service_name=~\"history.*\"} > 0.8) or vector(0)", "legendFormat": "count" }]
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Pool Max (per replica)",
+      "description": "Configured maximum connections per replica.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 33 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [{ "refId": "A", "expr": "max(dsql_pool_max_open{service_name=~\"history.*\"})", "legendFormat": "max" }]
+    },
+
+    { "id": 20, "type": "row", "title": "Connection Wait Time", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 21,
+      "type": "text",
+      "title": "Connection Wait Explained",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 38 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Connection wait time** = how long requests wait for a connection from the pool. In a healthy system this is near zero. During the 200 WPS benchmark, history service had P95 wait of **465,715 ms (7.7 minutes)** due to per-replica pool exhaustion. This directly adds to workflow latency."
+      }
+    },
+
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Connection Wait Time by Service (P95)",
+      "description": "95th percentile time waiting for a connection. Should be near zero. High values indicate pool exhaustion.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum(rate(dsql_pool_wait_duration_bucket{service_name=~\"history.*\"}[1m])) by (le)) * 1000", "legendFormat": "history P95" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(dsql_pool_wait_duration_bucket{service_name=~\"matching.*\"}[1m])) by (le)) * 1000", "legendFormat": "matching P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.95, sum(rate(dsql_pool_wait_duration_bucket{service_name=~\"frontend.*\"}[1m])) by (le)) * 1000", "legendFormat": "frontend P95" }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Connection Waits/sec by Service",
+      "description": "Rate of requests waiting for connections. Non-zero indicates pool pressure.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(dsql_pool_wait_total{service_name=~\"history.*\"}[1m]))", "legendFormat": "history waits/s" },
+        { "refId": "B", "expr": "sum(rate(dsql_pool_wait_total{service_name=~\"matching.*\"}[1m]))", "legendFormat": "matching waits/s" },
+        { "refId": "C", "expr": "sum(rate(dsql_pool_wait_total{service_name=~\"frontend.*\"}[1m]))", "legendFormat": "frontend waits/s" }
+      ]
+    },
+
+    { "id": 30, "type": "row", "title": "Persistence Latency", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 31,
+      "type": "text",
+      "title": "Persistence vs Connection Wait",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 49 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Important distinction**: Persistence latency measures actual database query time. Connection wait measures time waiting for a connection BEFORE the query runs. If persistence latency is healthy but workflow latency is high, check connection wait time - you may be waiting for connections, not for the database."
+      }
+    },
+
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "UpdateWorkflowExecution Latency",
+      "description": "The primary persistence operation. P95 should be under 500ms. Spikes here indicate database pressure.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 51 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(persistence_latency_bucket{operation=\"UpdateWorkflowExecution\"}[1m])) by (le)) * 1000", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(persistence_latency_bucket{operation=\"UpdateWorkflowExecution\"}[1m])) by (le)) * 1000", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(persistence_latency_bucket{operation=\"UpdateWorkflowExecution\"}[1m])) by (le)) * 1000", "legendFormat": "P99" }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Top Persistence Operations by Latency",
+      "description": "P95 latency for top persistence operations. Identifies which operations are slowest.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 51 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max"] } },
+      "targets": [{ "refId": "A", "expr": "topk(8, histogram_quantile(0.95, sum by (operation, le) (rate(persistence_latency_bucket[1m]))) * 1000)", "legendFormat": "{{operation}}" }]
+    },
+
+    { "id": 40, "type": "row", "title": "Other Services Pool Usage", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Matching Pool Usage - Per Replica",
+      "description": "Matching service typically uses few connections. High usage here is unusual.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 60 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max"] } },
+      "targets": [{ "refId": "A", "expr": "max by (task_id) (dsql_pool_in_use{service_name=~\"matching.*\"})", "legendFormat": "{{task_id}}" }]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Frontend Pool Usage - Per Replica",
+      "description": "Frontend service typically uses minimal connections (most work delegated to History).",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 60 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max"] } },
+      "targets": [{ "refId": "A", "expr": "max by (task_id) (dsql_pool_in_use{service_name=~\"frontend.*\"})", "legendFormat": "{{task_id}}" }]
+    },
+
+    { "id": 50, "type": "row", "title": "Service Latency Comparison", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 68 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Service Latency P95 by Service",
+      "description": "End-to-end service latency. Compare with persistence latency to identify where time is spent.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 69 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (service_name, le) (rate(service_latency_bucket[1m])))", "legendFormat": "{{service_name}}" }]
+    }
+  ],
+
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["temporal", "benchmark", "performance"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m"],
+    "time_options": ["5m", "15m", "30m", "1h", "3h"]
+  },
+  "timezone": "browser",
+  "title": "Benchmark Analysis",
+  "uid": "temporal-benchmark",
+  "version": 1,
+  "weekStart": ""
+}

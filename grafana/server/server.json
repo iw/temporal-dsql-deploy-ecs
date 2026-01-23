@@ -38,7 +38,7 @@
       "id": 101,
       "type": "timeseries",
       "title": "Cluster-wide state transitions per/sec",
-      "description": "Total state transitions across all services. This is the primary indicator of workflow execution throughput.",
+      "description": "Measures how busy the workflow state machine is. This is NOT workflow completions - a single workflow may generate many state transitions (activity starts, completions, timers, signals). Use this to gauge overall system load and compare against baseline.",
       "datasource": { "type": "prometheus", "uid": "amp" },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
@@ -49,12 +49,12 @@
       "id": 102,
       "type": "timeseries",
       "title": "History-service state transitions per/sec",
-      "description": "State transitions processed by the History service. This drives workflow state machine progression.",
+      "description": "State transitions processed by the History service. This drives workflow state machine progression. Compare with cluster-wide to see History's contribution.",
       "datasource": { "type": "prometheus", "uid": "amp" },
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_count{service_name=\"history\"}[1m]))", "legendFormat": "history transitions/sec" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_sum{service_name=~\"history.*\"}[1m]))", "legendFormat": "history transitions/sec" }]
     },
     {
       "id": 103,

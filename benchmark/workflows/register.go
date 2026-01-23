@@ -22,6 +22,9 @@ func RegisterWorkflows(w worker.Worker) {
 	w.RegisterWorkflowWithOptions(ChildWorkflow, workflow.RegisterOptions{
 		Name: ChildWorkflowName,
 	})
+	w.RegisterWorkflowWithOptions(StateTransitionWorkflow, workflow.RegisterOptions{
+		Name: StateTransitionWorkflowName,
+	})
 }
 
 // RegisterActivities registers all benchmark activities with the given worker.
@@ -29,6 +32,9 @@ func RegisterWorkflows(w worker.Worker) {
 func RegisterActivities(w worker.Worker) {
 	w.RegisterActivityWithOptions(NoOpActivity, activity.RegisterOptions{
 		Name: NoOpActivityName,
+	})
+	w.RegisterActivityWithOptions(FastActivity, activity.RegisterOptions{
+		Name: FastActivityName,
 	})
 }
 

@@ -8,15 +8,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewPrometheusMetricsHandler(t *testing.T) {
+func TestSDKMetricsHandler(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 	require.NotNil(t, handler)
 }
 
-func TestPrometheusMetricsHandler_WithTags(t *testing.T) {
+func TestSDKMetricsHandler_WithTags(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
 	// Create handler with tags
 	taggedHandler := handler.WithTags(map[string]string{
@@ -29,9 +29,9 @@ func TestPrometheusMetricsHandler_WithTags(t *testing.T) {
 	require.NotSame(t, handler, taggedHandler)
 }
 
-func TestPrometheusMetricsHandler_Counter(t *testing.T) {
+func TestSDKMetricsHandler_Counter(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
 	// Get a counter
 	counter := handler.Counter("temporal_request_failure")
@@ -41,9 +41,9 @@ func TestPrometheusMetricsHandler_Counter(t *testing.T) {
 	counter.Inc(1)
 }
 
-func TestPrometheusMetricsHandler_Timer(t *testing.T) {
+func TestSDKMetricsHandler_Timer(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
 	// Get a timer with tags
 	taggedHandler := handler.WithTags(map[string]string{
@@ -57,9 +57,9 @@ func TestPrometheusMetricsHandler_Timer(t *testing.T) {
 	timer.Record(100 * time.Millisecond)
 }
 
-func TestPrometheusMetricsHandler_LongRequest(t *testing.T) {
+func TestSDKMetricsHandler_LongRequest(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
 	// Get a timer with tags
 	taggedHandler := handler.WithTags(map[string]string{
@@ -70,27 +70,45 @@ func TestPrometheusMetricsHandler_LongRequest(t *testing.T) {
 
 	// Record a long request (> 1 second)
 	timer.Record(2 * time.Second)
-
-	// Verify long_request counter was incremented
-	// (We can't easily verify the counter value without exposing internals,
-	// but we can verify no panic occurred)
 }
 
-func TestPrometheusMetricsHandler_Gauge(t *testing.T) {
+func TestSDKMetricsHandler_Gauge(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
-	// Get a gauge
-	gauge := handler.Gauge("some_gauge")
+	// Get a gauge with tags (simulating worker_task_slots)
+	taggedHandler := handler.WithTags(map[string]string{
+		"worker_type": "WorkflowWorker",
+		"task_queue":  "benchmark-task-queue",
+	})
+	gauge := taggedHandler.Gauge("temporal_worker_task_slots_available")
 	require.NotNil(t, gauge)
 
-	// Update should not panic
+	// Update should not panic and should record the value
 	gauge.Update(42.0)
 }
 
-func TestPrometheusMetricsHandler_WorkflowTaskLatency(t *testing.T) {
+func TestSDKMetricsHandler_GaugeMultipleUpdates(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
+
+	// Get a gauge with tags
+	taggedHandler := handler.WithTags(map[string]string{
+		"worker_type": "ActivityWorker",
+		"task_queue":  "benchmark-task-queue",
+	})
+	gauge := taggedHandler.Gauge("temporal_worker_task_slots_used")
+	require.NotNil(t, gauge)
+
+	// Multiple updates should work
+	gauge.Update(10.0)
+	gauge.Update(20.0)
+	gauge.Update(15.0)
+}
+
+func TestSDKMetricsHandler_WorkflowTaskLatency(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	handler := SDKMetricsHandler(registry)
 
 	taggedHandler := handler.WithTags(map[string]string{
 		"namespace":  "test-namespace",
@@ -102,9 +120,9 @@ func TestPrometheusMetricsHandler_WorkflowTaskLatency(t *testing.T) {
 	timer.Record(50 * time.Millisecond)
 }
 
-func TestPrometheusMetricsHandler_ActivityTaskLatency(t *testing.T) {
+func TestSDKMetricsHandler_ActivityTaskLatency(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
 	taggedHandler := handler.WithTags(map[string]string{
 		"namespace":  "test-namespace",
@@ -116,9 +134,9 @@ func TestPrometheusMetricsHandler_ActivityTaskLatency(t *testing.T) {
 	timer.Record(75 * time.Millisecond)
 }
 
-func TestPrometheusMetricsHandler_WorkflowEndToEndLatency(t *testing.T) {
+func TestSDKMetricsHandler_WorkflowEndToEndLatency(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
 	taggedHandler := handler.WithTags(map[string]string{
 		"namespace":     "test-namespace",
@@ -130,9 +148,9 @@ func TestPrometheusMetricsHandler_WorkflowEndToEndLatency(t *testing.T) {
 	timer.Record(500 * time.Millisecond)
 }
 
-func TestPrometheusMetricsHandler_RequestFailure(t *testing.T) {
+func TestSDKMetricsHandler_RequestFailure(t *testing.T) {
 	registry := prometheus.NewRegistry()
-	handler := NewPrometheusMetricsHandler(registry)
+	handler := SDKMetricsHandler(registry)
 
 	taggedHandler := handler.WithTags(map[string]string{
 		"namespace":    "test-namespace",

@@ -49,7 +49,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Default values
-WORKFLOW_TYPE="simple"
+WORKFLOW_TYPE="multi-activity"
 TARGET_RATE="100"
 DURATION="5m"
 RAMP_UP="30s"
@@ -166,11 +166,11 @@ done
 
 # Validate workflow type
 case "$WORKFLOW_TYPE" in
-    simple|multi-activity|timer|child-workflow)
+    simple|multi-activity|timer|child-workflow|state-transitions)
         ;;
     *)
         log_error "Invalid workflow type: $WORKFLOW_TYPE"
-        log_error "Valid types: simple, multi-activity, timer, child-workflow"
+        log_error "Valid types: simple, multi-activity, timer, child-workflow, state-transitions"
         exit 1
         ;;
 esac

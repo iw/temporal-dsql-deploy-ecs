@@ -34,6 +34,9 @@ resource "aws_ecs_task_definition" "benchmark_worker" {
       name      = "benchmark-worker"
       image     = var.benchmark_image != "" ? var.benchmark_image : "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal"
       essential = true
+      # Reserve CPU/memory for main container (sidecar uses 128 CPU, 256 MB)
+      cpu    = var.benchmark_worker_cpu - 128
+      memory = var.benchmark_worker_memory - 256
 
       portMappings = [
         {
@@ -66,7 +69,9 @@ resource "aws_ecs_task_definition" "benchmark_worker" {
       linuxParameters = {
         initProcessEnabled = true
       }
-    }
+    },
+    # ADOT Sidecar for metrics collection (SDK metrics from benchmark workers)
+    local.adot_sidecar_benchmark_worker
   ])
 
   tags = {
@@ -117,6 +122,7 @@ resource "aws_ecs_service" "benchmark_worker" {
   }
 
   # Service Connect for accessing Temporal Frontend
+  # Note: Metrics are collected by ADOT sidecar, not via Service Connect
   service_connect_configuration {
     enabled   = true
     namespace = aws_service_discovery_http_namespace.main.arn
@@ -144,7 +150,7 @@ resource "aws_ecs_service" "benchmark_worker" {
 variable "benchmark_worker_cpu" {
   description = "CPU units for benchmark worker task"
   type        = number
-  default     = 2048
+  default     = 4096
 
   validation {
     condition     = contains([256, 512, 1024, 2048, 4096], var.benchmark_worker_cpu)
@@ -164,13 +170,13 @@ variable "benchmark_worker_memory" {
 }
 
 variable "benchmark_worker_count" {
-  description = "Number of benchmark worker tasks to run (0 to disable)"
+  description = "Number of benchmark worker tasks to run (0 to disable). Max 51 with 13 benchmark instances (384 vCPU quota)."
   type        = number
   default     = 0
 
   validation {
-    condition     = var.benchmark_worker_count >= 0 && var.benchmark_worker_count <= 10
-    error_message = "Worker count must be between 0 and 10."
+    condition     = var.benchmark_worker_count >= 0 && var.benchmark_worker_count <= 51
+    error_message = "Worker count must be between 0 and 51."
   }
 }
 

@@ -6,7 +6,7 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 
 - **Multi-service architecture**: Separate ECS services for History, Matching, Frontend, Worker, and UI
 - **ECS Service Connect**: Modern service mesh with Envoy sidecar for fast failover
-- **ECS on EC2 with Graviton**: 10x m7g.2xlarge ARM64 instances with ECS managed placement (configurable)
+- **ECS on EC2 with Graviton**: m8g.4xlarge ARM64 instances with ECS managed placement (configurable)
 - **Aurora DSQL**: Serverless PostgreSQL-compatible persistence with IAM authentication
 - **OpenSearch Provisioned**: 3-node m6g.large.search cluster for visibility
 - **Amazon Managed Prometheus**: Metrics collection and storage
@@ -25,34 +25,28 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                    ECS Cluster with Service Connect                 │    │
 │  │                                                                     │    │
-│  │  ┌─────────────────────────────────────────────────────────────┐   │    │
-│  │  │  10 × m7g.2xlarge EC2 instances (8 vCPU, 32 GiB each)       │   │    │
-│  │  │  ECS managed placement spreads tasks across instances/AZs   │   │    │
-│  │  │                                                             │   │    │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │   │    │
-│  │  │  │ History  │ │ History  │ │ History  │ │ History  │       │   │    │
-│  │  │  │  (×8)    │ │ Matching │ │ Matching │ │ Frontend │       │   │    │
-│  │  │  │  :7234   │ │  (×6)    │ │  (×6)    │ │  (×4)    │       │   │    │
-│  │  │  │  :9090   │ │  :7235   │ │  :7235   │ │  :7233   │       │   │    │
-│  │  │  └──────────┘ │  :9090   │ │  :9090   │ │  :9090   │       │   │    │
-│  │  │               └──────────┘ └──────────┘ └──────────┘       │   │    │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐                    │   │    │
-│  │  │  │  Worker  │ │    UI    │ │ Grafana  │ ┌──────────┐       │   │    │
-│  │  │  │  (×2)    │ │  :8080   │ │  :3000   │ │   ADOT   │       │   │    │
-│  │  │  │  :7239   │ └──────────┘ └──────────┘ │ Collector│       │   │    │
-│  │  │  └──────────┘                           └──────────┘       │   │    │
-│  │  └─────────────────────────────────────────────────────────────┘   │    │
+│  │  Main Cluster: 10 × m8g.4xlarge (160 vCPU)                         │    │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │    │
+│  │  │ History  │ │ Matching │ │ Frontend │ │  Worker  │ │ UI/Graf  │  │    │
+│  │  │  ×16     │ │  ×16     │ │  ×9      │ │  ×3      │ │          │  │    │
+│  │  │ 4vCPU ea │ │ 1vCPU ea │ │ 2vCPU ea │ │ 0.5vCPU  │ │          │  │    │
+│  │  │ +ADOT    │ │ +ADOT    │ │ +ADOT    │ │          │ │          │  │    │
+│  │  │ sidecar  │ │ sidecar  │ │ sidecar  │ │          │ │          │  │    │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │    │
 │  │                                                                     │    │
-│  │  ┌──────────────────────────────────────────────────────────────┐  │    │
-│  │  │              Service Connect (Envoy Mesh)                    │  │    │
-│  │  └──────────────────────────────────────────────────────────────┘  │    │
+│  │  Benchmark Cluster: 13 × m8g.4xlarge (208 vCPU, scale-from-zero)   │    │
+│  │  ┌──────────────────────────────────┐ ┌──────────────────────────┐ │    │
+│  │  │ Benchmark Workers ×51 (4vCPU ea) │ │ Generator ×1 (4vCPU)     │ │    │
+│  │  │ +ADOT sidecar                    │ │ +ADOT sidecar            │ │    │
+│  │  └──────────────────────────────────┘ └──────────────────────────┘ │    │
+│  │                                                                     │    │
+│  │  Service Connect (Envoy Mesh) for inter-service communication      │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
 │  ┌─────────────────┐  ┌───────────────┐  ┌─────────────────┐               │
 │  │   OpenSearch    │  │  VPC Endpts   │  │   NAT Gateway   │               │
 │  │  3×m6g.large    │  │  (AWS Servcs) │  │  (Outbound)     │               │
-│  │  100GiB gp3 ea  │  └───────────────┘  └─────────────────┘               │
-│  └─────────────────┘                                                        │
+│  └─────────────────┘  └───────────────┘  └─────────────────┘               │
 └───────────────────────────────────────────────────────────────────────────────┘
                                 │
                     ┌───────────┼───────────────┐
@@ -60,39 +54,37 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
               ┌─────▼─────┐  ┌──▼───────────┐  ┌─────▼─────┐
               │   DSQL    │  │ Prometheus   │  │  Secrets  │
               │ (External)│  │   (AMP)      │  │  Manager  │
-              └───────────┘  │ Remote Write │  └───────────┘
-                             └──────────────┘
+              └───────────┘  └──────────────┘  └───────────┘
 ```
 
 ### Production Configuration
 
-**150 WPS Configuration** (10x m7g.2xlarge = 80 vCPUs, 320 GiB RAM):
+**400 WPS Configuration** (23x m8g.4xlarge = 368 vCPUs):
+
+Main Cluster (10 instances, 160 vCPU):
 
 | Service | Replicas | CPU | Memory | Notes |
 |---------|----------|-----|--------|-------|
-| History | 8 | 4 vCPU | 8 GiB | 4096 shards |
-| Matching | 6 | 1 vCPU | 2 GiB | 32 task queue partitions |
-| Frontend | 4 | 2 vCPU | 4 GiB | gRPC API gateway |
-| Worker | 2 | 0.5 vCPU | 1 GiB | System workflows |
+| History | 16 | 4 vCPU | 8 GiB | 4096 shards, +ADOT sidecar |
+| Matching | 16 | 1 vCPU | 2 GiB | Task queue management, +ADOT sidecar |
+| Frontend | 9 | 2 vCPU | 4 GiB | gRPC API gateway, +ADOT sidecar |
+| Worker | 3 | 0.5 vCPU | 1 GiB | System workflows |
 | UI | 1 | 0.25 vCPU | 512 MiB | Web interface |
 | Grafana | 1 | 0.25 vCPU | 512 MiB | Dashboards |
-| ADOT | 1 | 0.5 vCPU | 1 GiB | Metrics collector |
-| Benchmark Workers | 6 | 2 vCPU | 4 GiB | Workflow processing |
 
-**100 WPS Configuration** (6x m7g.2xlarge = 48 vCPUs, 192 GiB RAM):
+Benchmark Cluster (13 instances, 208 vCPU):
 
 | Service | Replicas | CPU | Memory | Notes |
 |---------|----------|-----|--------|-------|
-| History | 6 | 2 vCPU | 8 GiB | 4096 shards |
-| Matching | 4 | 1 vCPU | 4 GiB | 16 task queue partitions |
-| Frontend | 3 | 1 vCPU | 4 GiB | gRPC API gateway |
-| Worker | 2 | 1 vCPU | 4 GiB | System workflows |
+| Benchmark Workers | 51 | 4 vCPU | 4 GiB | Workflow processing |
+| Generator | 1 | 4 vCPU | 8 GiB | Workflow submission |
 
 ## Prerequisites
 
 - AWS CLI v2 configured with appropriate permissions
 - Terraform >= 1.5
 - Docker with buildx support (for ARM64 builds)
+- awscurl (for querying Amazon Managed Prometheus)
 - Aurora DSQL cluster (created separately)
 - AWS Session Manager plugin (for remote access)
 - [temporal-dsql](https://github.com/iw/temporal) - Custom Temporal fork with DSQL persistence support
@@ -408,6 +400,18 @@ The deployment includes pre-configured Grafana dashboards for monitoring Tempora
    - CloudWatch metrics for DSQL cluster health
    - DPU usage and commit latency
 
+3. **Benchmark Dashboard** (`grafana/bench/bench.json`)
+   - Workflow completion rate (WPS)
+   - State transitions per second
+   - Workflow latency percentiles
+   - Generator and worker metrics
+
+4. **Workers Dashboard** (`grafana/workers/workers.json`)
+   - Worker task processing rates
+   - Activity and workflow task latencies
+   - Poller utilization
+   - Worker slot availability
+
 ### Building Custom Grafana Image
 
 The dashboards are baked into a custom Grafana image with pre-configured datasources:
@@ -536,24 +540,24 @@ For initial testing with the production configuration (4 history, 3 matching, 2 
 
 ### Benchmark Results (January 2026)
 
-Results from 150 WPS benchmark with 8 History, 6 Matching, 4 Frontend, 2 Worker, 6 Benchmark Worker replicas:
+Results from 400 WPS benchmark with 16 History, 16 Matching, 9 Frontend, 3 Worker, 51 Benchmark Worker replicas:
 
 | Metric | Value |
 |--------|-------|
-| Target Rate | 150 WPS |
-| Actual Rate | 136.74 WPS |
-| Workflows Started | 41,052 |
-| Workflows Completed | 41,052 (100%) |
-| P50 Latency | 197 ms |
-| P95 Latency | 220 ms |
-| P99 Latency | 259 ms |
-| Max Latency | 594 ms |
+| Target Rate | 400 WPS |
+| Start Rate | 372 WPS |
+| Peak Completion Rate | 323 WPS |
+| Workflows Started | 111,696 |
+| Workflows Completed | 111,692 (99.996%) |
+| Peak State Transitions | 10,600 st/s |
 
 Key findings:
-- **100% workflow completion** - Zero failures across 41,052 workflows
-- **Sub-300ms P99 latency** - Excellent tail latency under sustained load
-- **~1,000 DSQL connections** - Pool pre-warmed and stable throughout test
-- **No OCC retry storms** - GetWorkflowExecution optimization working
+- **99.996% workflow completion** - Near-perfect success rate
+- **323 WPS peak throughput** - 81% of target rate achieved
+- **10,600 st/s peak** - High state transition throughput
+- **Workers not bottleneck** - 51 workers with 1,632 pollers had spare capacity
+
+See [Benchmark Results](docs/benchmark-results.md) for detailed metrics and analysis.
 
 ### Viewing Benchmark Metrics
 
@@ -572,7 +576,7 @@ Estimated costs for eu-west-1 region (January 2026):
 
 | Resource | Configuration | Hourly Cost |
 |----------|--------------|-------------|
-| EC2 (10 instances) | m7g.2xlarge (8 vCPU, 32 GB each) | $3.64 |
+| EC2 (23 instances) | m8g.4xlarge (16 vCPU, 64 GB each) | $18.47 |
 | NAT Gateway | Single AZ | $0.048 |
 | NAT Gateway Data | ~2 GB/hr estimate | $0.096 |
 | OpenSearch (3 nodes) | m6g.large.search, 100GB gp3 each | $0.42 |
@@ -581,17 +585,17 @@ Estimated costs for eu-west-1 region (January 2026):
 | Secrets Manager | 1 secret | $0.0004 |
 | Amazon Managed Prometheus | Workspace + ingestion | $0.02 |
 | DynamoDB | On-demand, rate limiter table | ~$0.001 |
-| **Total Hourly** | | **~$4.32** |
+| **Total Hourly** | | **~$19.80** |
 
 ### Daily/Monthly Estimates
 
 | Usage Pattern | Cost |
 |--------------|------|
-| 8-hour development day | ~$34.50 |
-| Monthly (8 hrs/day, 22 days) | ~$760 |
-| 24/7 operation | ~$3,100/month |
+| 8-hour development day | ~$158 |
+| Monthly (8 hrs/day, 22 days) | ~$3,500 |
+| 24/7 operation | ~$14,400/month |
 
-See [150 WPS Benchmark Presentation](docs/150-wps-benchmark-presentation.md) for detailed cost breakdown including DSQL DPU costs.
+See [Benchmark Results](docs/benchmark-results.md) for detailed cost breakdown including DSQL DPU costs.
 
 ### Cost Optimization Tips
 
@@ -725,16 +729,15 @@ View EC2 instances and service status:
 ./scripts/cluster-management.sh status
 ```
 
-## ADOT Collector for Metrics
+## ADOT Sidecar for Metrics
 
-The deployment includes AWS Distro for OpenTelemetry (ADOT) as a dedicated ECS service for metrics collection:
+Each Temporal service task includes an ADOT (AWS Distro for OpenTelemetry) sidecar container for metrics collection:
 
-- **Prometheus Scraping**: Scrapes metrics from all Temporal services on port 9090
-- **Service Connect Discovery**: Uses Service Connect DNS names (temporal-frontend, temporal-history, etc.) for automatic service discovery
+- **Prometheus Scraping**: Scrapes metrics from localhost:9090 within the same task
 - **AMP Remote Write**: Sends metrics to Amazon Managed Prometheus using SigV4 authentication
-- **SSM Configuration**: Collector config stored in SSM Parameter Store for easy updates
+- **Per-Task Collection**: Each service replica has its own ADOT sidecar for reliable metrics
 
-The ADOT collector runs as a client-only Service Connect service, consuming Temporal service endpoints without exposing its own. This provides a clean separation between the metrics collection infrastructure and the Temporal services.
+The sidecar approach provides better reliability than a centralized collector - if a service task fails, its metrics are still collected up until failure. Configuration is embedded in the task definition.
 
 ### Viewing Metrics
 

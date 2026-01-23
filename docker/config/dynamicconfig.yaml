@@ -43,24 +43,10 @@ frontend.persistenceMaxQPS:
   - value: 9000
     constraints: {}
 
-# DSQL connection pool settings (per service instance)
-# With pool pre-warming and increased defaults:
-# - 8 history × 50 conns = 400 total history connections
-# - 6 matching × 50 conns = 300 total matching connections
-# - 4 frontend × 50 conns = 200 total frontend connections
-# - 2 worker × 50 conns = 100 total worker connections
-# Total across all services: ~1000 connections to DSQL (well under 10K limit)
-persistence.maxConns:
-  - value: 50
-    constraints: {}
-
-# Match maxIdleConns to maxConns to avoid connection churn
-# When idle connections exceed this limit, they are closed immediately
-persistence.maxIdleConns:
-  - value: 50
-    constraints: {}
-
 # DSQL transaction size limit (4MB)
+# Note: Connection pool settings (maxConns, maxIdleConns) are configured via
+# static config (persistence-dsql.template.yaml) using TEMPORAL_SQL_MAX_CONNS
+# and TEMPORAL_SQL_MAX_IDLE_CONNS environment variables, not dynamic config.
 persistence.transactionSizeLimit:
   - value: 4000000
     constraints: {}

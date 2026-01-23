@@ -60,7 +60,7 @@ read_terraform_config() {
     fi
 }
 
-# Get service names
+# Get service names (ADOT runs as sidecar, not separate service)
 get_service_names() {
     echo "${PROJECT_NAME}-temporal-frontend"
     echo "${PROJECT_NAME}-temporal-history"
@@ -68,7 +68,6 @@ get_service_names() {
     echo "${PROJECT_NAME}-temporal-worker"
     echo "${PROJECT_NAME}-temporal-ui"
     echo "${PROJECT_NAME}-grafana"
-    echo "${PROJECT_NAME}-adot"
 }
 
 # Scale all services to 0
@@ -182,7 +181,7 @@ scale_up_services() {
     
     read_terraform_config
     
-    # Production service counts
+    # Production service counts (ADOT runs as sidecar, not separate service)
     # Order matters: History first for shard ownership, then Matching, Frontend, Worker, UI
     # This ensures ringpop cluster forms correctly
     local services=(
@@ -192,7 +191,6 @@ scale_up_services() {
         "${PROJECT_NAME}-temporal-worker:2"
         "${PROJECT_NAME}-temporal-ui:1"
         "${PROJECT_NAME}-grafana:1"
-        "${PROJECT_NAME}-adot:1"
     )
     
     for service_count in "${services[@]}"; do

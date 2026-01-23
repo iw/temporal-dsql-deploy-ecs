@@ -1,0 +1,341 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Temporal Worker performance dashboard. Monitors task slots, polling, and SDK metrics from benchmark workers.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "iteration": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": ["temporal"],
+      "targetBlank": true,
+      "title": "Related Dashboards",
+      "type": "dashboards"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Worker Performance Guide",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Worker Performance Dashboard\n\nThis dashboard monitors Temporal workers processing workflows and activities. With the ADOT sidecar pattern, we now get per-worker metrics.\n\n**Key questions this dashboard answers:**\n1. **Are workers keeping up?** → Check Task Slots (available vs used)\n2. **Is there task queue backlog?** → Check Schedule-to-Start latency\n3. **Are workers healthy?** → Check Poller counts and request latency\n\n**Troubleshooting**: If slots are exhausted, add more workers. If schedule-to-start is high but slots available, check task queue configuration."
+      }
+    },
+
+    { "id": 2, "type": "row", "title": "Task Slot Capacity", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Workflow Slots Available",
+      "description": "Total workflow task slots available across all workers. Zero = workers at capacity.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 10 }, { "color": "green", "value": 100 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(temporal_worker_task_slots_available{worker_type=\"WorkflowWorker\"})", "legendFormat": "available" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Workflow Slots Used",
+      "description": "Workflow task slots currently in use. Compare with available to gauge capacity.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(temporal_worker_task_slots_used{worker_type=\"WorkflowWorker\"})", "legendFormat": "used" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Activity Slots Available",
+      "description": "Total activity task slots available. Activities often need more slots than workflows.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 10 }, { "color": "green", "value": 100 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(temporal_worker_task_slots_available{worker_type=\"ActivityWorker\"})", "legendFormat": "available" }]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Activity Slots Used",
+      "description": "Activity task slots currently in use.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(temporal_worker_task_slots_used{worker_type=\"ActivityWorker\"})", "legendFormat": "used" }]
+    },
+
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Workflow Task Slots Over Time",
+      "description": "Available vs used workflow slots. If used approaches total (available + used), workers are at capacity.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(temporal_worker_task_slots_available{worker_type=\"WorkflowWorker\"})", "legendFormat": "available" },
+        { "refId": "B", "expr": "sum(temporal_worker_task_slots_used{worker_type=\"WorkflowWorker\"})", "legendFormat": "used" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Activity Task Slots Over Time",
+      "description": "Available vs used activity slots. Activities typically have longer execution times than workflows.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(temporal_worker_task_slots_available{worker_type=\"ActivityWorker\"})", "legendFormat": "available" },
+        { "refId": "B", "expr": "sum(temporal_worker_task_slots_used{worker_type=\"ActivityWorker\"})", "legendFormat": "used" }
+      ]
+    },
+
+    { "id": 10, "type": "row", "title": "Schedule-to-Start Latency", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 11,
+      "type": "text",
+      "title": "Schedule-to-Start Explained",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 19 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Schedule-to-Start latency** = time from when a task is scheduled until a worker picks it up. High values indicate either: (1) not enough workers/pollers, (2) task queue misconfiguration, or (3) workers too slow processing existing tasks. This is a key indicator of worker capacity."
+      }
+    },
+
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Workflow Task Schedule-to-Start Latency",
+      "description": "Time from workflow task scheduled to worker pickup. Should be under 100ms in healthy systems.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_workflow_task_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_workflow_task_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_workflow_task_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Activity Task Schedule-to-Start Latency",
+      "description": "Time from activity task scheduled to worker pickup. High values indicate activity worker shortage.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_activity_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_activity_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_activity_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
+      ]
+    },
+
+    { "id": 20, "type": "row", "title": "Polling & Task Execution", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Active Workflow Pollers",
+      "description": "Number of workflow task pollers actively waiting for work.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 30 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 10 }, { "color": "green", "value": 50 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(temporal_num_pollers{poller_type=\"workflow_task\"})", "legendFormat": "pollers" }]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Active Activity Pollers",
+      "description": "Number of activity task pollers actively waiting for work.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 30 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 10 }, { "color": "green", "value": 50 }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(temporal_num_pollers{poller_type=\"activity_task\"})", "legendFormat": "pollers" }]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Workflow Tasks Executed/sec",
+      "description": "Rate of workflow tasks being executed by workers.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 30 },
+      "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(temporal_workflow_task_execution_latency_count[1m]))", "legendFormat": "tasks/s" }]
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Activity Tasks Executed/sec",
+      "description": "Rate of activity tasks being executed by workers.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 30 },
+      "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(temporal_activity_execution_latency_count[1m]))", "legendFormat": "tasks/s" }]
+    },
+
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Pollers Over Time",
+      "description": "Active pollers by type. Drops indicate worker issues or restarts.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(temporal_num_pollers{poller_type=\"workflow_task\"})", "legendFormat": "workflow pollers" },
+        { "refId": "B", "expr": "sum(temporal_num_pollers{poller_type=\"activity_task\"})", "legendFormat": "activity pollers" }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Task Execution Rate",
+      "description": "Tasks executed per second by type.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(temporal_workflow_task_execution_latency_count[1m]))", "legendFormat": "workflow tasks/s" },
+        { "refId": "B", "expr": "sum(rate(temporal_activity_execution_latency_count[1m]))", "legendFormat": "activity tasks/s" }
+      ]
+    },
+
+    { "id": 30, "type": "row", "title": "Task Execution Latency", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Workflow Task Execution Latency",
+      "description": "Time to execute workflow tasks (workflow code execution). Should be fast (<100ms) for most workflows.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_workflow_task_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_workflow_task_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_workflow_task_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Activity Execution Latency",
+      "description": "Time to execute activities (your business logic). Varies based on activity implementation.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_activity_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_activity_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_activity_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
+      ]
+    },
+
+    { "id": 40, "type": "row", "title": "SDK Request Latency", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 41,
+      "type": "text",
+      "title": "SDK Metrics Explained",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 52 },
+      "options": {
+        "mode": "markdown",
+        "content": "**SDK request latency** measures the time for workers to communicate with the Temporal server. High latency here indicates network issues or server overload. These metrics come from the Temporal Go SDK running in the benchmark workers."
+      }
+    },
+
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "SDK Request Latency by Operation",
+      "description": "Time for SDK operations to complete. High latency indicates server or network issues.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 54 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
+      "targets": [{ "refId": "A", "expr": "topk(10, histogram_quantile(0.95, sum by (operation, le) (rate(temporal_request_latency_bucket[1m]))) * 1000)", "legendFormat": "{{operation}}" }]
+    },
+
+    { "id": 50, "type": "row", "title": "Per-Worker Metrics", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 62 }, "collapsed": false, "panels": [] },
+
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Workflow Slots by Worker",
+      "description": "Workflow task slots per worker instance. Uneven distribution may indicate task queue issues.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 63 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max"] } },
+      "targets": [{ "refId": "A", "expr": "temporal_worker_task_slots_used{worker_type=\"WorkflowWorker\"}", "legendFormat": "{{task_id}}" }]
+    },
+    {
+      "id": 52,
+      "type": "timeseries",
+      "title": "Activity Slots by Worker",
+      "description": "Activity task slots per worker instance.",
+      "datasource": { "type": "prometheus", "uid": "amp" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 63 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max"] } },
+      "targets": [{ "refId": "A", "expr": "temporal_worker_task_slots_used{worker_type=\"ActivityWorker\"}", "legendFormat": "{{task_id}}" }]
+    }
+  ],
+
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["temporal", "workers", "sdk"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m"],
+    "time_options": ["5m", "15m", "30m", "1h", "3h"]
+  },
+  "timezone": "browser",
+  "title": "Worker Performance",
+  "uid": "temporal-workers",
+  "version": 1,
+  "weekStart": ""
+}

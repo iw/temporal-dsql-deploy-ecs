@@ -44,6 +44,9 @@ resource "aws_ecs_task_definition" "temporal_worker" {
       name      = "temporal-worker"
       image     = var.temporal_image
       essential = true
+      # Reserve CPU/memory for main container (sidecar uses 128 CPU, 256 MB)
+      cpu    = var.temporal_worker_cpu - 128
+      memory = var.temporal_worker_memory - 256
 
       # The runtime image entrypoint handles config rendering and server startup
       # No command override needed - SERVICES env var tells it which service to start
@@ -88,8 +91,9 @@ resource "aws_ecs_task_definition" "temporal_worker" {
         # DSQL Connection Pool Settings (optimized for serverless)
         # Pool pre-warming fills to MaxConns on startup
         # MaxIdleConns should match MaxConns to avoid connection churn
-        { name = "TEMPORAL_SQL_MAX_CONNS", value = "50" },
-        { name = "TEMPORAL_SQL_MAX_IDLE_CONNS", value = "50" },
+        # Worker has minimal DB usage - 1 conn observed at 200 WPS
+        { name = "TEMPORAL_SQL_MAX_CONNS", value = "10" },
+        { name = "TEMPORAL_SQL_MAX_IDLE_CONNS", value = "10" },
         { name = "TEMPORAL_SQL_CONNECTION_TIMEOUT", value = "30s" },
         { name = "TEMPORAL_SQL_MAX_CONN_LIFETIME", value = "55m" },
 
@@ -148,7 +152,9 @@ resource "aws_ecs_task_definition" "temporal_worker" {
       linuxParameters = {
         initProcessEnabled = true
       }
-    }
+    },
+    # ADOT Sidecar for metrics collection
+    local.adot_sidecar_worker
   ])
 
   tags = {

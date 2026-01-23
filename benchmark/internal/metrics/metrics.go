@@ -13,7 +13,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.temporal.io/sdk/client"
 )
 
 // MetricsHandler exposes Prometheus metrics.
@@ -238,10 +237,4 @@ func (h *handler) ResetStartTime() {
 	h.startTime = time.Now()
 	h.completedCount = 0
 	h.latencies = h.latencies[:0]
-}
-
-// SDKMetricsHandler creates a Temporal SDK metrics handler that reports to the same registry.
-// This integrates Temporal SDK metrics with the benchmark metrics endpoint.
-func SDKMetricsHandler(registry *prometheus.Registry) client.MetricsHandler {
-	return NewPrometheusMetricsHandler(registry)
 }

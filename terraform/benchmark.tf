@@ -72,6 +72,26 @@ resource "aws_iam_role_policy" "benchmark_ecs_exec" {
   })
 }
 
+# Amazon Managed Prometheus remote write policy for benchmark ADOT sidecar
+resource "aws_iam_role_policy" "benchmark_prometheus" {
+  name = "prometheus-remote-write"
+  role = aws_iam_role.benchmark_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "aps:RemoteWrite",
+        "aps:GetSeries",
+        "aps:GetLabels",
+        "aps:GetMetricMetadata"
+      ]
+      Resource = aws_prometheus_workspace.main.arn
+    }]
+  })
+}
+
 # -----------------------------------------------------------------------------
 # Benchmark CloudWatch Log Group
 # -----------------------------------------------------------------------------
@@ -124,7 +144,7 @@ resource "aws_ecs_task_definition" "benchmark" {
       environment = [
         { name = "TEMPORAL_ADDRESS", value = "temporal-frontend:7233" },
         { name = "BENCHMARK_NAMESPACE", value = "benchmark" },
-        { name = "BENCHMARK_WORKFLOW_TYPE", value = "simple" },
+        { name = "BENCHMARK_WORKFLOW_TYPE", value = "multi-activity" },
         { name = "BENCHMARK_TARGET_RATE", value = "100" },
         { name = "BENCHMARK_DURATION", value = "5m" },
         { name = "BENCHMARK_RAMP_UP", value = "30s" },
@@ -195,21 +215,6 @@ resource "aws_security_group" "benchmark" {
   tags = {
     Name = "${var.project_name}-benchmark-sg"
   }
-}
-
-# -----------------------------------------------------------------------------
-# Security Group Rules for Metrics Scraping
-# -----------------------------------------------------------------------------
-# Allow ADOT to scrape Prometheus metrics from benchmark runner
-
-resource "aws_security_group_rule" "benchmark_metrics_from_adot" {
-  type                     = "ingress"
-  from_port                = 9090
-  to_port                  = 9090
-  protocol                 = "tcp"
-  source_security_group_id = aws_security_group.adot.id
-  security_group_id        = aws_security_group.benchmark.id
-  description              = "Prometheus metrics from ADOT Collector"
 }
 
 # Allow benchmark to connect to Temporal Frontend (gRPC port 7233)

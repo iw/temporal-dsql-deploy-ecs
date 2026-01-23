@@ -509,7 +509,6 @@ output "all_service_names" {
     temporal_worker   = aws_ecs_service.temporal_worker.name
     temporal_ui       = aws_ecs_service.temporal_ui.name
     grafana           = aws_ecs_service.grafana.name
-    adot              = aws_ecs_service.adot.name
   }
 }
 
@@ -518,7 +517,7 @@ output "deployment_summary" {
   value       = <<-EOT
     
     ============================================================
-    TEMPORAL ECS FARGATE DEPLOYMENT SUMMARY
+    TEMPORAL ECS DEPLOYMENT SUMMARY
     ============================================================
     
     ECS Cluster: ${aws_ecs_cluster.main.name}
@@ -531,16 +530,15 @@ output "deployment_summary" {
     - Temporal Worker:   ${aws_ecs_service.temporal_worker.name}
     - Temporal UI:       ${aws_ecs_service.temporal_ui.name}
     - Grafana:           ${aws_ecs_service.grafana.name}
-    - ADOT Collector:    ${aws_ecs_service.adot.name}
     
     ENDPOINTS:
     - OpenSearch: https://${aws_opensearch_domain.temporal.endpoint}
     - Prometheus: ${aws_prometheus_workspace.main.prometheus_endpoint}
     
     METRICS COLLECTION:
-    - ADOT scrapes metrics from all Temporal services on port 9090
-    - Metrics are remote written to Amazon Managed Prometheus
-    - ADOT config stored in SSM: ${aws_ssm_parameter.adot_config.name}
+    - ADOT sidecars run alongside each Temporal service
+    - Each sidecar scrapes localhost:9090 and pushes to AMP
+    - All replicas are scraped (not just one via load balancer)
     
     ACCESS COMMANDS:
     
@@ -561,52 +559,10 @@ output "deployment_summary" {
 
 
 # -----------------------------------------------------------------------------
-# ADOT Collector Outputs
+# ADOT Sidecar Outputs
 # -----------------------------------------------------------------------------
 
-output "adot_service_name" {
-  description = "Name of the ADOT Collector ECS service"
-  value       = aws_ecs_service.adot.name
-}
-
-output "adot_task_definition_arn" {
-  description = "ARN of the ADOT Collector task definition"
-  value       = aws_ecs_task_definition.adot.arn
-}
-
-output "adot_task_definition_family" {
-  description = "Family of the ADOT Collector task definition"
-  value       = aws_ecs_task_definition.adot.family
-}
-
-output "adot_task_role_arn" {
-  description = "ARN of the ADOT Collector task role"
-  value       = aws_iam_role.adot_task.arn
-}
-
-output "adot_config_ssm_parameter_arn" {
-  description = "ARN of the SSM Parameter containing ADOT collector configuration"
-  value       = aws_ssm_parameter.adot_config.arn
-}
-
-output "adot_config_ssm_parameter_name" {
-  description = "Name of the SSM Parameter containing ADOT collector configuration"
-  value       = aws_ssm_parameter.adot_config.name
-}
-
-output "adot_ecs_exec_command" {
-  description = "Command to access ADOT Collector container via ECS Exec"
-  value       = <<-EOT
-    # Get the task ARN first
-    TASK_ARN=$(aws ecs list-tasks --cluster ${aws_ecs_cluster.main.name} --service-name ${aws_ecs_service.adot.name} --query 'taskArns[0]' --output text --region ${var.region})
-    
-    # Execute shell in the container
-    aws ecs execute-command \
-      --cluster ${aws_ecs_cluster.main.name} \
-      --task $TASK_ARN \
-      --container adot-collector \
-      --interactive \
-      --command "/bin/sh" \
-      --region ${var.region}
-  EOT
+output "adot_sidecar_log_group_name" {
+  description = "Name of the CloudWatch Log Group for ADOT sidecars"
+  value       = aws_cloudwatch_log_group.adot_sidecar.name
 }

@@ -285,7 +285,9 @@ func (g *generator) startWorkflow(ctx context.Context, workflowID string) {
 	case config.WorkflowTypeSimple:
 		run, err = g.client.ExecuteWorkflow(ctx, opts, workflows.SimpleWorkflowName)
 	case config.WorkflowTypeMultiActivity:
-		run, err = g.client.ExecuteWorkflow(ctx, opts, workflows.MultiActivityWorkflowName, g.cfg.ActivityCount)
+		run, err = g.client.ExecuteWorkflow(ctx, opts, workflows.MultiActivityWorkflowName)
+	case config.WorkflowTypeStateTransitions:
+		run, err = g.client.ExecuteWorkflow(ctx, opts, workflows.StateTransitionWorkflowName)
 	case config.WorkflowTypeTimer:
 		run, err = g.client.ExecuteWorkflow(ctx, opts, workflows.TimerWorkflowName, g.cfg.TimerDuration)
 	case config.WorkflowTypeChildWorkflow:
