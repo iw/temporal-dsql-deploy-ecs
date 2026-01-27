@@ -211,7 +211,7 @@ The DSQL plugin currently imports `postgresql/driver` instead of `dsql/driver`. 
 
 | Quota | Limit | Configurable | Error Code |
 |-------|-------|--------------|------------|
-| **Max connections per cluster** | 10,000 | Yes | TOO_MANY_CONNECTIONS(53300) |
+| **Max connections per cluster** | 10,000 | Yes (via AWS support) | TOO_MANY_CONNECTIONS(53300) |
 | **Max connection rate** | 100/sec | No | CONFIGURED_LIMIT_EXCEEDED(53400) |
 | **Max connection burst** | 1,000 | No | - |
 | **Connection refill rate** | 100/sec | No | - |
@@ -554,8 +554,8 @@ Once changes are validated locally, promote to ECS for production-like testing.
 
 ### The Challenge
 
-Multiple Temporal services share a single DSQL cluster with hard limits:
-- **10,000 max connections** cluster-wide
+Multiple Temporal services share a single DSQL cluster with limits:
+- **10,000 max connections** cluster-wide (default, can be raised via AWS support)
 - **100 connections/sec** rate limit
 - **60 minute** max connection duration
 
