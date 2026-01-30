@@ -4,6 +4,9 @@
 # S3 bucket for Loki log storage using TSDB single-store mode.
 # Both chunks and index are stored in S3 (no DynamoDB required).
 #
+# The bucket is protected from deletion (prevent_destroy) to preserve logs.
+# To destroy: manually empty the bucket first, then remove the lifecycle rule.
+#
 # Requirements: 8.4
 # -----------------------------------------------------------------------------
 
@@ -13,6 +16,12 @@ resource "aws_s3_bucket" "loki" {
   tags = {
     Name    = "${var.project_name}-loki-logs"
     Service = "loki"
+  }
+
+  # Prevent accidental deletion of log data
+  # To destroy: manually empty bucket, then comment out this block
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
