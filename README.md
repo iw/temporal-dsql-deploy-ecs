@@ -1,6 +1,18 @@
 # Temporal on AWS ECS (EC2)
 
-Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 instances (Graviton) and Aurora DSQL persistence.
+Terraform infrastructure for deploying Temporal workflow engine on AWS ECS with EC2 instances (Graviton) and Aurora DSQL persistence.
+
+## Environments
+
+The project supports multiple deployment environments:
+
+| Environment | Purpose | Directory |
+|-------------|---------|-----------|
+| `dev` | Development and testing | `terraform/envs/dev` |
+| `bench` | Performance testing with benchmark infrastructure | `terraform/envs/bench` |
+| `prod` | Production workloads | `terraform/envs/prod` |
+
+Each environment is independently configurable with its own instance counts, service replicas, and resource allocations.
 
 ## Features
 
@@ -26,27 +38,25 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                    ECS Cluster with Service Connect                 │    │
 │  │                                                                     │    │
-│  │  Main Cluster: 10 × m8g.4xlarge (160 vCPU)                         │    │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │    │
 │  │  │ History  │ │ Matching │ │ Frontend │ │  Worker  │ │ UI/Graf  │  │    │
-│  │  │  ×16     │ │  ×16     │ │  ×9      │ │  ×3      │ │          │  │    │
-│  │  │ 4vCPU ea │ │ 1vCPU ea │ │ 2vCPU ea │ │ 0.5vCPU  │ │          │  │    │
+│  │  │  ×N      │ │  ×N      │ │  ×N      │ │  ×N      │ │  ×1      │  │    │
 │  │  │ +Alloy   │ │ +Alloy   │ │ +Alloy   │ │          │ │          │  │    │
 │  │  │ sidecar  │ │ sidecar  │ │ sidecar  │ │          │ │          │  │    │
 │  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │    │
 │  │                                                                     │    │
-│  │  Benchmark Cluster: 13 × m8g.4xlarge (208 vCPU, scale-from-zero)   │    │
+│  │  Service Connect (Envoy Mesh) for inter-service communication      │    │
+│  │                                                                     │    │
+│  │  [bench env only] Benchmark Cluster (scale-from-zero)              │    │
 │  │  ┌──────────────────────────────────┐ ┌──────────────────────────┐ │    │
-│  │  │ Benchmark Workers ×51 (4vCPU ea) │ │ Generator ×1 (4vCPU)     │ │    │
+│  │  │ Benchmark Workers                │ │ Generator                │ │    │
 │  │  │ +Alloy sidecar                   │ │ +Alloy sidecar           │ │    │
 │  │  └──────────────────────────────────┘ └──────────────────────────┘ │    │
-│  │                                                                     │    │
-│  │  Service Connect (Envoy Mesh) for inter-service communication      │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
 │  ┌─────────────────┐  ┌───────────────┐  ┌─────────────────┐               │
 │  │   OpenSearch    │  │  VPC Endpts   │  │   NAT Gateway   │               │
-│  │  3×m6g.large    │  │  (AWS Servcs) │  │  (Outbound)     │               │
+│  │  (Visibility)   │  │  (AWS Servcs) │  │  (Outbound)     │               │
 │  └─────────────────┘  └───────────────┘  └─────────────────┘               │
 └───────────────────────────────────────────────────────────────────────────────┘
                                 │
@@ -58,27 +68,29 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
               └───────────┘  └──────────────┘  └───────────┘
 ```
 
-### Production Configuration
+### Service Configuration
 
-**400 WPS Configuration** (23x m8g.4xlarge = 368 vCPUs):
+Service replicas and resources are configurable per environment. Example configurations:
 
-Main Cluster (10 instances, 160 vCPU):
+**Development** (minimal resources for testing):
+
+| Service | Replicas | CPU | Memory |
+|---------|----------|-----|--------|
+| History | 2-3 | 1-2 vCPU | 4 GiB |
+| Matching | 2 | 1 vCPU | 2 GiB |
+| Frontend | 2 | 1 vCPU | 2 GiB |
+| Worker | 1-2 | 0.5 vCPU | 1 GiB |
+
+**Production** (high availability):
 
 | Service | Replicas | CPU | Memory | Notes |
 |---------|----------|-----|--------|-------|
-| History | 16 | 4 vCPU | 8 GiB | 4096 shards, +Alloy sidecar |
-| Matching | 16 | 1 vCPU | 2 GiB | Task queue management, +Alloy sidecar |
-| Frontend | 9 | 2 vCPU | 4 GiB | gRPC API gateway, +Alloy sidecar |
-| Worker | 3 | 0.5 vCPU | 1 GiB | System workflows |
+| History | 6-16 | 4 vCPU | 8 GiB | +Alloy sidecar |
+| Matching | 4-16 | 1 vCPU | 2 GiB | +Alloy sidecar |
+| Frontend | 3-9 | 2 vCPU | 4 GiB | +Alloy sidecar |
+| Worker | 2-3 | 0.5 vCPU | 1 GiB | System workflows |
 | UI | 1 | 0.25 vCPU | 512 MiB | Web interface |
 | Grafana | 1 | 0.25 vCPU | 512 MiB | Dashboards |
-
-Benchmark Cluster (13 instances, 208 vCPU):
-
-| Service | Replicas | CPU | Memory | Notes |
-|---------|----------|-----|--------|-------|
-| Benchmark Workers | 51 | 4 vCPU | 4 GiB | Workflow processing |
-| Generator | 1 | 4 vCPU | 8 GiB | Workflow submission |
 
 ## Prerequisites
 
@@ -300,12 +312,17 @@ This waits for all instances to be registered before proceeding.
 After schema setup is complete, scale up the Temporal services:
 
 ```bash
-# Scale all services for target WPS (50, 100, 200, or 400)
-./scripts/scale-services.sh dev up --wps 100
+# Scale services using predefined sizing (50, 100, 200, or 400)
+./scripts/scale-services.sh dev up --wps 50
+
+# For production environments, use higher sizing
+./scripts/scale-services.sh prod up --wps 200
 
 # To scale down (e.g., for cost savings)
 ./scripts/scale-services.sh dev down
 ```
+
+The `--wps` flag selects a predefined service configuration. You can also set replica counts directly in `terraform.tfvars`.
 
 ## Remote Access
 
@@ -466,7 +483,9 @@ The custom DSQL plugin emits these metrics (requires `framework: opentelemetry` 
 
 ## Benchmarking
 
-The deployment includes a benchmarking system for measuring Temporal performance with DSQL persistence. The benchmark runner is a Go application that executes configurable workflow patterns, collects metrics, and reports results.
+The `bench` environment includes infrastructure for performance testing. The benchmark runner is a Go application that executes configurable workflow patterns, collects metrics, and reports results.
+
+Note: Benchmark infrastructure is only deployed in the `bench` environment.
 
 ### Benchmark Infrastructure
 
@@ -531,7 +550,7 @@ The deployment includes a benchmarking system for measuring Temporal performance
 
 ### Recommended Starting Parameters
 
-For initial testing:
+For initial performance testing in the `bench` environment:
 
 ```bash
 # Start with 50 WPS to establish baseline
@@ -576,7 +595,7 @@ Benchmark metrics are scraped by Alloy and sent to Amazon Managed Prometheus. Vi
 
 ## Cost Estimate
 
-Estimated costs for eu-west-1 region (January 2026):
+Costs vary significantly by environment configuration. Example for a production-sized deployment in eu-west-1:
 
 | Resource | Configuration | Hourly Cost |
 |----------|--------------|-------------|
