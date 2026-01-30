@@ -3,50 +3,64 @@ set -euo pipefail
 
 # Build and push custom Grafana image with pre-configured dashboards
 #
-# Usage: ./scripts/build-grafana.sh [aws-region]
+# Usage: ./scripts/build-grafana.sh [environment|aws-region]
 #
 # Arguments:
+#   environment   Environment to read config from (dev, bench, prod)
 #   aws-region    AWS region (default: eu-west-1)
 #
 # Examples:
 #   ./scripts/build-grafana.sh
+#   ./scripts/build-grafana.sh dev
 #   ./scripts/build-grafana.sh us-east-1
-#
-# The script can also use --from-terraform to read region from Terraform outputs.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Available environments
+AVAILABLE_ENVS=("dev" "bench" "prod")
+
 # Parse arguments
-FROM_TERRAFORM=false
 AWS_REGION=""
+ENVIRONMENT=""
 
 for arg in "$@"; do
-    case $arg in
-        --from-terraform)
-            FROM_TERRAFORM=true
-            ;;
-        *)
-            # Positional argument - treat as region
-            if [ -z "$AWS_REGION" ]; then
-                AWS_REGION="$arg"
-            fi
-            ;;
-    esac
+    # Check if it's an environment name
+    for env in "${AVAILABLE_ENVS[@]}"; do
+        if [ "$arg" = "$env" ]; then
+            ENVIRONMENT="$arg"
+            break
+        fi
+    done
+    
+    # If not an environment, treat as region
+    if [ -z "$ENVIRONMENT" ] || [ "$arg" != "$ENVIRONMENT" ]; then
+        if [ -z "$AWS_REGION" ] && [[ "$arg" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]]; then
+            AWS_REGION="$arg"
+        fi
+    fi
 done
 
-# Get configuration
-if [ "$FROM_TERRAFORM" = true ]; then
-    cd "$PROJECT_ROOT/terraform"
-    if terraform state list &>/dev/null && terraform output -json 2>/dev/null | grep -q '"region"'; then
-        AWS_REGION=$(terraform output -raw region)
-        AWS_ACCOUNT_ID=$(terraform output -raw aws_account_id 2>/dev/null || aws sts get-caller-identity --query Account --output text)
+# Get configuration from Terraform if environment specified
+if [ -n "$ENVIRONMENT" ]; then
+    ENV_DIR="$PROJECT_ROOT/terraform/envs/$ENVIRONMENT"
+    if [ -d "$ENV_DIR" ]; then
+        cd "$ENV_DIR"
+        if terraform state list &>/dev/null && terraform output -json 2>/dev/null | grep -q '"region"'; then
+            AWS_REGION=$(terraform output -raw region)
+            AWS_ACCOUNT_ID=$(terraform output -raw aws_account_id 2>/dev/null || aws sts get-caller-identity --query Account --output text)
+            echo "Reading configuration from Terraform ($ENVIRONMENT environment)..."
+        else
+            echo "Note: Terraform state not found or no outputs. Using defaults and AWS CLI."
+            AWS_REGION="${AWS_REGION:-eu-west-1}"
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        fi
+        cd "$PROJECT_ROOT"
     else
-        echo "Note: Terraform state not found or no outputs. Using defaults and AWS CLI."
+        echo "Warning: Environment directory not found: terraform/envs/$ENVIRONMENT"
         AWS_REGION="${AWS_REGION:-eu-west-1}"
         AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
     fi
-    cd "$PROJECT_ROOT"
 else
     # Default to eu-west-1 if not specified
     AWS_REGION="${AWS_REGION:-eu-west-1}"

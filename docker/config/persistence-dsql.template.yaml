@@ -114,5 +114,5 @@ publicClient:
   hostPort: "temporal-frontend:7233"
 
 dynamicConfigClient:
-  filepath: "/etc/temporal/config/dynamicconfig/development-dsql.yaml"
+  filepath: "/etc/temporal/config/dynamicconfig/dynamicconfig.yaml"
   pollInterval: "10s"

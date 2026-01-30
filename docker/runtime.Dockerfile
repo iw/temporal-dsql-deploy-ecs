@@ -6,6 +6,7 @@
 # - Adds gettext for envsubst (config template rendering)
 # - Adds curl for ECS metadata endpoint queries
 # - Includes persistence config templates for DSQL + OpenSearch
+# - Includes environment-specific dynamic configs (dev, bench, prod)
 # - Provides render-and-start.sh entrypoint
 
 ARG BASE_IMAGE
@@ -24,7 +25,15 @@ RUN mkdir -p /etc/temporal/config/dynamicconfig && \
 
 # Copy config templates and scripts
 COPY --chown=temporal:temporal config/persistence-dsql.template.yaml /etc/temporal/config/persistence-dsql-opensearch.template.yaml
-COPY --chown=temporal:temporal config/dynamicconfig.yaml /etc/temporal/config/dynamicconfig/development-dsql.yaml
+
+# Copy environment-specific dynamic configs
+COPY --chown=temporal:temporal config/dynamicconfig-dev.yaml /etc/temporal/config/dynamicconfig/dev.yaml
+COPY --chown=temporal:temporal config/dynamicconfig-bench.yaml /etc/temporal/config/dynamicconfig/bench.yaml
+COPY --chown=temporal:temporal config/dynamicconfig-prod.yaml /etc/temporal/config/dynamicconfig/prod.yaml
+
+# Create symlink for default (prod) - overridden at startup by DEPLOY_ENVIRONMENT
+RUN ln -sf /etc/temporal/config/dynamicconfig/prod.yaml /etc/temporal/config/dynamicconfig/dynamicconfig.yaml
+
 COPY --chown=temporal:temporal scripts/render-and-start.sh /usr/local/bin/render-and-start.sh
 
 RUN chmod +x /usr/local/bin/render-and-start.sh
@@ -33,3 +42,4 @@ USER temporal
 
 # Override entrypoint to render config before starting
 ENTRYPOINT ["/usr/local/bin/render-and-start.sh"]
+CMD []

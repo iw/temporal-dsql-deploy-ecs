@@ -121,28 +121,29 @@ mkdir -p "$BUILD_DIR/${TARGET_ARCH}"
 mkdir -p "$BUILD_DIR/temporal/schema"
 
 # Build binaries using Make targets (same as GHA workflow)
+# Note: -trimpath strips local build paths from binaries for cleaner log output
 echo "Building temporal-server..."
-GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 make temporal-server
+GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -trimpath -o temporal-server ./cmd/server
 cp temporal-server "$BUILD_DIR/${TARGET_ARCH}/"
 
 echo "Building temporal-cassandra-tool..."
-GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 make temporal-cassandra-tool
+GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -trimpath -o temporal-cassandra-tool ./cmd/tools/cassandra
 cp temporal-cassandra-tool "$BUILD_DIR/${TARGET_ARCH}/"
 
 echo "Building temporal-sql-tool..."
-GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 make temporal-sql-tool
+GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -trimpath -o temporal-sql-tool ./cmd/tools/sql
 cp temporal-sql-tool "$BUILD_DIR/${TARGET_ARCH}/"
 
 echo "Building temporal-elasticsearch-tool..."
-GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 make temporal-elasticsearch-tool
+GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -trimpath -o temporal-elasticsearch-tool ./cmd/tools/elasticsearch
 cp temporal-elasticsearch-tool "$BUILD_DIR/${TARGET_ARCH}/"
 
 echo "Building temporal-dsql-tool..."
-GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 make temporal-dsql-tool
+GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -trimpath -o temporal-dsql-tool ./tools/dsql
 cp temporal-dsql-tool "$BUILD_DIR/${TARGET_ARCH}/"
 
 echo "Building tdbg..."
-GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 make tdbg
+GOOS=linux GOARCH=$TARGET_ARCH CGO_ENABLED=0 go build -trimpath -o tdbg ./cmd/tools/tdbg
 cp tdbg "$BUILD_DIR/${TARGET_ARCH}/"
 
 # Copy schema files (for admin-tools image)

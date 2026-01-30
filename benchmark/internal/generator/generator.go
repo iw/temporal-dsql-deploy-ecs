@@ -4,7 +4,7 @@ package generator
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,8 +132,10 @@ func (g *generator) Start(ctx context.Context) error {
 	g.doneCh = make(chan struct{})
 	g.mu.Unlock()
 
-	log.Printf("Starting workflow generator: target rate=%.2f/s, duration=%v, ramp-up=%v",
-		g.targetRate, g.cfg.Duration, g.cfg.RampUpDuration)
+	slog.Info("Starting workflow generator",
+		"target_rate", g.targetRate,
+		"duration", g.cfg.Duration,
+		"ramp_up", g.cfg.RampUpDuration)
 
 	go g.runGenerator(ctx)
 
@@ -154,7 +156,7 @@ func (g *generator) Stop() error {
 	// Wait for generator to finish
 	<-g.doneCh
 
-	log.Println("Workflow generator stopped")
+	slog.Info("Workflow generator stopped")
 	return nil
 }
 
@@ -212,14 +214,14 @@ func (g *generator) runGenerator(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Generator stopping: context cancelled")
+			slog.Info("Generator stopping: context cancelled")
 			return
 		case <-g.stopCh:
-			log.Println("Generator stopping: stop requested")
+			slog.Info("Generator stopping: stop requested")
 			return
 		case now := <-ticker.C:
 			if now.After(endTime) {
-				log.Println("Benchmark duration completed")
+				slog.Info("Benchmark duration completed")
 				return
 			}
 
@@ -302,7 +304,7 @@ func (g *generator) startWorkflow(ctx context.Context, workflowID string) {
 		if g.onComplete != nil {
 			g.onComplete(workflowID, duration, err)
 		}
-		log.Printf("Failed to start workflow %s: %v", workflowID, err)
+		slog.Error("Failed to start workflow", "workflow_id", workflowID, "error", err)
 		return
 	}
 
@@ -335,7 +337,7 @@ func (g *generator) startWorkflow(ctx context.Context, workflowID string) {
 		}
 		// Only log if not context cancelled
 		if ctx.Err() == nil {
-			log.Printf("Workflow %s failed: %v", workflowID, err)
+			slog.Error("Workflow failed", "workflow_id", workflowID, "error", err)
 		}
 		return
 	}
@@ -352,7 +354,8 @@ func (g *generator) startWorkflow(ctx context.Context, workflowID string) {
 func (g *generator) LogActualRate() {
 	stats := g.Stats()
 	if stats.CurrentRate < stats.TargetRate*0.9 {
-		log.Printf("WARNING: Actual rate (%.2f/s) is below target (%.2f/s)",
-			stats.CurrentRate, stats.TargetRate)
+		slog.Warn("Actual rate below target",
+			"actual_rate", stats.CurrentRate,
+			"target_rate", stats.TargetRate)
 	}
 }

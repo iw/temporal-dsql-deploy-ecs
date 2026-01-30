@@ -1,0 +1,196 @@
+# -----------------------------------------------------------------------------
+# Bench Environment Configuration
+# -----------------------------------------------------------------------------
+# Copy this file to terraform.tfvars and update the DSQL and image values.
+# This configuration is representative of a benchmark environment (WPS 200).
+#
+# Resource Summary (10x m8g.4xlarge = 160 vCPU, 640 GB RAM):
+#   - Temporal Services: 44 tasks, ~100 vCPU, ~200 GB RAM
+#   - Observability: 2 tasks, ~0.75 vCPU, ~1.5 GB RAM
+#   - Benchmark Workers: Scaled separately via benchmark module
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Aurora DSQL Configuration (REQUIRED - update these values)
+# -----------------------------------------------------------------------------
+
+# Aurora DSQL cluster endpoint (created externally)
+# Format: cluster-id.dsql.region.on.aws
+dsql_cluster_endpoint = "your-cluster-id.dsql.eu-west-1.on.aws"
+
+# Aurora DSQL cluster ARN for IAM policy configuration
+# Format: arn:aws:dsql:region:account:cluster/cluster-id
+dsql_cluster_arn = "arn:aws:dsql:eu-west-1:123456789012:cluster/your-cluster-id"
+
+# -----------------------------------------------------------------------------
+# Temporal Image Configuration (REQUIRED - update these values)
+# -----------------------------------------------------------------------------
+
+# Custom Temporal runtime Docker image URI (must be ARM64 compatible)
+# Built by: ./scripts/build-and-push-ecr.sh
+temporal_image = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-dsql-runtime:latest"
+
+# Custom Temporal admin-tools Docker image URI (must be ARM64 compatible)
+# Built by: ./scripts/build-and-push-ecr.sh
+temporal_admin_tools_image = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-dsql-admin-tools:latest"
+
+# -----------------------------------------------------------------------------
+# Benchmark Image Configuration (REQUIRED - update this value)
+# -----------------------------------------------------------------------------
+
+# Docker image URI for the benchmark runner (must be ARM64 compatible)
+# Built by: ./scripts/build-benchmark.sh
+benchmark_image = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-benchmark:latest"
+
+# -----------------------------------------------------------------------------
+# General Configuration
+# -----------------------------------------------------------------------------
+
+project_name = "temporal-bench"
+region       = "eu-west-1"
+
+# -----------------------------------------------------------------------------
+# VPC Configuration
+# -----------------------------------------------------------------------------
+
+vpc_cidr             = "10.0.0.0/16"
+availability_zones   = ["eu-west-1a", "eu-west-1b"]
+enable_vpc_endpoints = true
+
+# -----------------------------------------------------------------------------
+# EC2 Instance Configuration
+# -----------------------------------------------------------------------------
+# m8g.4xlarge: 16 vCPU (16384 CPU units), 64 GB RAM, 8 ENIs per instance
+# With 10 instances: 160 vCPU, 640 GB RAM, 80 ENIs total
+# Supports WPS 200+ configuration with benchmark workers
+
+ec2_instance_type  = "m8g.4xlarge"
+ec2_instance_count = 10
+
+# -----------------------------------------------------------------------------
+# Temporal History Service Configuration (WPS 200)
+# -----------------------------------------------------------------------------
+# 16 replicas × 4096 CPU × 8192 MB = 65536 CPU units, 131072 MB RAM
+
+temporal_history_cpu    = 4096
+temporal_history_memory = 8192
+temporal_history_count  = 16
+temporal_history_shards = 4096
+
+# -----------------------------------------------------------------------------
+# Temporal Matching Service Configuration (WPS 200)
+# -----------------------------------------------------------------------------
+# 16 replicas × 1024 CPU × 2048 MB = 16384 CPU units, 32768 MB RAM
+
+temporal_matching_cpu    = 1024
+temporal_matching_memory = 2048
+temporal_matching_count  = 16
+
+# -----------------------------------------------------------------------------
+# Temporal Frontend Service Configuration (WPS 200)
+# -----------------------------------------------------------------------------
+# 9 replicas × 2048 CPU × 4096 MB = 18432 CPU units, 36864 MB RAM
+
+temporal_frontend_cpu    = 2048
+temporal_frontend_memory = 4096
+temporal_frontend_count  = 9
+
+# -----------------------------------------------------------------------------
+# Temporal Worker Service Configuration (WPS 200)
+# -----------------------------------------------------------------------------
+# 3 replicas × 512 CPU × 1024 MB = 1536 CPU units, 3072 MB RAM
+
+temporal_worker_cpu    = 512
+temporal_worker_memory = 1024
+temporal_worker_count  = 3
+
+# -----------------------------------------------------------------------------
+# Temporal UI Service Configuration
+# -----------------------------------------------------------------------------
+# 1 replica × 256 CPU × 512 MB = 256 CPU units, 512 MB RAM
+
+temporal_ui_image  = "temporalio/ui:latest"
+temporal_ui_cpu    = 256
+temporal_ui_memory = 512
+temporal_ui_count  = 1
+
+# -----------------------------------------------------------------------------
+# OpenSearch Configuration
+# -----------------------------------------------------------------------------
+
+opensearch_visibility_index = "temporal_visibility_v1_bench"
+opensearch_instance_type    = "m6g.large.search"
+opensearch_instance_count   = 3
+
+# -----------------------------------------------------------------------------
+# Observability Configuration
+# -----------------------------------------------------------------------------
+# Loki: 1 replica × 512 CPU × 1024 MB = 512 CPU units, 1024 MB RAM
+# Grafana: 1 replica × 256 CPU × 512 MB = 256 CPU units, 512 MB RAM
+
+loki_enabled        = true
+loki_image          = "grafana/loki:3.6.4"
+loki_cpu            = 512
+loki_memory         = 1024
+loki_retention_days = 14
+alloy_image         = "grafana/alloy:v1.12.2"
+
+# -----------------------------------------------------------------------------
+# Grafana Configuration
+# -----------------------------------------------------------------------------
+# Create the secret before deploying:
+#   aws secretsmanager create-secret \
+#     --name grafana/admin \
+#     --secret-string '{"admin_user":"admin","admin_password":"your-password"}'
+#
+# Build and push custom Grafana image with Loki datasource and dashboards:
+#   ./scripts/build-grafana.sh
+
+grafana_admin_secret_name = "grafana/admin"
+grafana_image             = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-grafana:latest"
+grafana_cpu               = 256
+grafana_memory            = 512
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+
+log_retention_days = 14
+
+# -----------------------------------------------------------------------------
+# DSQL Connection Reservoir Configuration
+# -----------------------------------------------------------------------------
+# Pre-creates connections to avoid rate limit pressure under load.
+
+dsql_reservoir_enabled         = true
+dsql_reservoir_target_ready    = 50
+dsql_reservoir_base_lifetime   = "11m"
+dsql_reservoir_lifetime_jitter = "2m"
+dsql_reservoir_guard_window    = "45s"
+
+# -----------------------------------------------------------------------------
+# Distributed Connection Leasing Configuration
+# -----------------------------------------------------------------------------
+# Coordinates global connection count across all service instances.
+
+dsql_distributed_conn_lease_enabled = true
+
+# -----------------------------------------------------------------------------
+# Benchmark Configuration
+# -----------------------------------------------------------------------------
+# Benchmark infrastructure is enabled for load testing.
+# Scale benchmark workers separately using ./scripts/scale-benchmark-workers.sh
+
+benchmark_enabled       = true
+benchmark_cpu           = 4096
+benchmark_memory        = 8192
+benchmark_max_instances = 13
+
+# -----------------------------------------------------------------------------
+# Benchmark Scaling Recommendations
+# -----------------------------------------------------------------------------
+# | Target WPS | Workers | EC2 Instances | Notes           |
+# |------------|---------|---------------|-----------------|
+# | 100        | 30      | 4             | Conservative    |
+# | 200        | 40      | 6             | Moderate        |
+# | 400        | 51      | 13            | Max with quota  |

@@ -1,0 +1,269 @@
+# Dynamic configuration for Aurora DSQL - Prod Environment
+# Infrastructure: 10 × m8g.4xlarge EC2, 4096 shards, 3-node OpenSearch
+# Target: WPS 100 (with headroom for scaling)
+
+# =============================================================================
+# Eager Execution Settings
+# =============================================================================
+
+system.enableActivityEagerExecution:
+  - value: true
+    constraints: {}
+
+# =============================================================================
+# DSQL-Specific Settings
+# =============================================================================
+
+persistence.enableDSQLMode:
+  - value: true
+    constraints: {}
+
+# DSQL QPS - balanced for production reliability
+history.persistenceMaxQPS:
+  - value: 9000
+    constraints: {}
+
+matching.persistenceMaxQPS:
+  - value: 9000
+    constraints: {}
+
+frontend.persistenceMaxQPS:
+  - value: 9000
+    constraints: {}
+
+# DSQL transaction size limit (4MB)
+persistence.transactionSizeLimit:
+  - value: 4000000
+    constraints: {}
+
+persistence.healthCheckInterval:
+  - value: 30s
+    constraints: {}
+
+# =============================================================================
+# Advanced Visibility (OpenSearch) Settings
+# =============================================================================
+
+system.advancedVisibilityWritingMode:
+  - value: "on"
+    constraints: {}
+
+system.enableReadFromClosedExecutionV2:
+  - value: true
+    constraints: {}
+
+system.enableReadVisibilityFromES:
+  - value: true
+    constraints: {}
+
+visibility.maxPageSize:
+  - value: 1000
+    constraints: {}
+
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+system.enableLogCustomerQueryParameter:
+  - value: true
+    constraints: {}
+
+# =============================================================================
+# History Service Settings
+# =============================================================================
+
+history.maxBufferedQueryCount:
+  - value: 2000
+    constraints: {}
+
+history.timerProcessorMaxPollRPS:
+  - value: 100
+    constraints: {}
+
+history.timerProcessorUpdateAckInterval:
+  - value: 10s
+    constraints: {}
+
+history.transferProcessorMaxPollRPS:
+  - value: 100
+    constraints: {}
+
+history.replicationTaskProcessorMaxPollRPS:
+  - value: 100
+    constraints: {}
+
+# =============================================================================
+# History Cache Settings (CRITICAL for performance)
+# =============================================================================
+
+history.cacheSizeBasedLimit:
+  - value: true
+    constraints: {}
+
+# Max cache size per history host: 1GB
+# With 6 history replicas = 6GB total cache capacity
+history.hostLevelCacheMaxSizeBytes:
+  - value: 1073741824
+    constraints: {}
+
+history.cacheTTL:
+  - value: 1h
+    constraints: {}
+
+history.cacheNonUserContextLockTimeout:
+  - value: 500ms
+    constraints: {}
+
+history.historyShardControllerMaxConcurrentAcquires:
+  - value: 10
+    constraints: {}
+
+history.defaultActivityRetryPolicy:
+  - value:
+      InitialIntervalInSeconds: 1
+      MaximumIntervalInSeconds: 100
+      BackoffCoefficient: 2.0
+      MaximumAttempts: 0
+    constraints: {}
+
+# =============================================================================
+# Matching Service Settings
+# =============================================================================
+
+# Task queue partitions - balanced for production
+matching.numTaskqueueWritePartitions:
+  - value: 32
+    constraints: {}
+
+matching.numTaskqueueReadPartitions:
+  - value: 32
+    constraints: {}
+
+matching.maxTaskBatchSize:
+  - value: 100
+    constraints: {}
+
+matching.getTasksBatchSize:
+  - value: 500
+    constraints: {}
+
+matching.longPollExpirationInterval:
+  - value: 60s
+    constraints: {}
+
+matching.forwarderMaxOutstandingPolls:
+  - value: 40
+    constraints: {}
+
+matching.forwarderMaxOutstandingTasks:
+  - value: 400
+    constraints: {}
+
+matching.forwarderMaxRatePerSecond:
+  - value: 400
+    constraints: {}
+
+matching.enableTaskInfoLogByDomainID:
+  - value: false
+    constraints: {}
+
+# =============================================================================
+# Frontend Service Settings
+# =============================================================================
+
+frontend.enableClientVersionCheck:
+  - value: true
+    constraints: {}
+
+# Rate limiting - balanced for production (WPS 100 with headroom)
+frontend.rps:
+  - value: 15000
+    constraints: {}
+
+frontend.namespaceRPS:
+  - value: 15000
+    constraints: {}
+
+frontend.namespaceCount:
+  - value: 4000
+    constraints: {}
+
+frontend.visibilityMaxPageSize:
+  - value: 1000
+    constraints: {}
+
+# =============================================================================
+# Worker Service Settings
+# =============================================================================
+
+worker.enableBatcher:
+  - value: true
+    constraints: {}
+
+worker.enableLogging:
+  - value: true
+    constraints: {}
+
+worker.scannerMaxConcurrentActivityExecutionSize:
+  - value: 10
+    constraints: {}
+
+worker.scannerMaxConcurrentWorkflowTaskExecutionSize:
+  - value: 10
+    constraints: {}
+
+# =============================================================================
+# Cluster Membership Settings
+# =============================================================================
+
+system.membershipMaxJoinDuration:
+  - value: 120s
+    constraints: {}
+
+# =============================================================================
+# System Settings
+# =============================================================================
+
+system.enableParentClosePolicy:
+  - value: true
+    constraints: {}
+
+system.enableNamespaceNotActiveAutoForwarding:
+  - value: true
+    constraints: {}
+
+system.enableLoggerRateLimiting:
+  - value: true
+    constraints: {}
+
+# =============================================================================
+# Archival Settings
+# =============================================================================
+
+archival.history.enableRead:
+  - value: true
+    constraints: {}
+
+archival.visibility.enableRead:
+  - value: true
+    constraints: {}
+
+# =============================================================================
+# Nexus Settings - DISABLED for DSQL compatibility
+# =============================================================================
+
+system.enableNexus:
+  - value: false
+    constraints: {}
+
+frontend.enableNexusAPIs:
+  - value: false
+    constraints: {}
+
+worker.enableNexus:
+  - value: false
+    constraints: {}
+
+system.nexusEndpointRegistryEnabled:
+  - value: false
+    constraints: {}

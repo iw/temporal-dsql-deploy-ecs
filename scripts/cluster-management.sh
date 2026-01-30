@@ -8,25 +8,47 @@
 # - Wait for EC2 instances to register
 # - Ordered service startup for ringpop cluster formation
 #
+# Usage:
+#   ./scripts/cluster-management.sh <environment> <command>
+#
+# Arguments:
+#   environment    Environment to operate on (dev, bench, prod)
+#
+# Commands:
+#   scale-down       - Scale all services to 0
+#   clean-membership - Prompt to clean cluster_membership table
+#   wait-ec2         - Wait for EC2 instances to register
+#   scale-up         - Scale up services one at a time
+#   force-deploy     - Force new deployment for all services
+#   status           - Show cluster and service status
+#   recover          - Full crash loop recovery
+#
 # Prerequisites:
 # - AWS CLI configured with appropriate permissions
-# - Terraform initialized in terraform/ directory
+# - Terraform applied for the environment
 # - DSQL cluster endpoint available (for clean-membership)
 # -----------------------------------------------------------------------------
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TERRAFORM_DIR="${SCRIPT_DIR}/../terraform"
-CLUSTER_NAME="${CLUSTER_NAME:-temporal-dev-cluster}"
-REGION="${AWS_REGION:-eu-west-1}"
-PROJECT_NAME="${PROJECT_NAME:-temporal-dev}"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+# Available environments
+AVAILABLE_ENVS=("dev" "bench" "prod")
+
+# Default values
+ENVIRONMENT=""
+COMMAND=""
+CLUSTER_NAME=""
+REGION=""
+PROJECT_NAME=""
 
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -40,24 +62,83 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Read configuration from Terraform
-read_terraform_config() {
-    if [ -f "$TERRAFORM_DIR/terraform.tfvars" ]; then
-        local tf_project
-        local tf_region
-        tf_project=$(grep -E "^project_name" "$TERRAFORM_DIR/terraform.tfvars" | cut -d'"' -f2 || true)
-        tf_region=$(grep -E "^region" "$TERRAFORM_DIR/terraform.tfvars" | cut -d'"' -f2 || true)
-        
-        if [ -n "$tf_project" ]; then
-            PROJECT_NAME="$tf_project"
-            CLUSTER_NAME="${PROJECT_NAME}-cluster"
+show_usage() {
+    echo "Usage: $0 <environment> <command>"
+    echo ""
+    echo "Arguments:"
+    echo "  environment    Environment to operate on (dev, bench, prod)"
+    echo ""
+    echo "Commands:"
+    echo "  scale-down       - Scale all services to 0"
+    echo "  clean-membership - Prompt to clean cluster_membership table"
+    echo "  wait-ec2         - Wait for EC2 instances to register"
+    echo "  scale-up         - Scale up services one at a time"
+    echo "  force-deploy     - Force new deployment for all services"
+    echo "  status           - Show cluster and service status"
+    echo "  recover          - Full crash loop recovery"
+    echo ""
+    echo "Available environments: ${AVAILABLE_ENVS[*]}"
+    echo ""
+    echo "Examples:"
+    echo "  $0 dev status"
+    echo "  $0 bench scale-down"
+    echo "  $0 prod recover"
+    exit 1
+}
+
+# Validate environment
+validate_environment() {
+    local env="$1"
+    local env_dir="$PROJECT_ROOT/terraform/envs/$env"
+    
+    local valid=false
+    for available_env in "${AVAILABLE_ENVS[@]}"; do
+        if [ "$env" = "$available_env" ]; then
+            valid=true
+            break
         fi
-        if [ -n "$tf_region" ]; then
-            REGION="$tf_region"
-        fi
-        
-        log_info "Using project: $PROJECT_NAME, cluster: $CLUSTER_NAME, region: $REGION"
+    done
+    
+    if [ "$valid" = false ]; then
+        log_error "Invalid environment '$env'"
+        echo ""
+        echo "Available environments: ${AVAILABLE_ENVS[*]}"
+        exit 1
     fi
+    
+    if [ ! -d "$env_dir" ]; then
+        log_error "Environment directory not found: terraform/envs/$env"
+        exit 1
+    fi
+}
+
+# Read configuration from Terraform outputs
+read_terraform_config() {
+    local env_dir="$PROJECT_ROOT/terraform/envs/$ENVIRONMENT"
+    
+    log_info "Reading configuration from Terraform ($ENVIRONMENT environment)..."
+    
+    cd "$env_dir"
+    
+    # Get cluster name from terraform output
+    CLUSTER_NAME=$(terraform output -raw ecs_cluster_name 2>/dev/null) || {
+        log_error "Could not get cluster name from terraform output"
+        echo "Make sure terraform has been applied for the $ENVIRONMENT environment"
+        exit 1
+    }
+    
+    # Get region from terraform output
+    REGION=$(terraform output -raw region 2>/dev/null) || REGION="eu-west-1"
+    
+    # Extract project name from cluster name (remove -cluster suffix)
+    PROJECT_NAME="${CLUSTER_NAME%-cluster}"
+    
+    cd "$PROJECT_ROOT"
+    
+    log_info "Environment: $ENVIRONMENT"
+    log_info "Project: $PROJECT_NAME"
+    log_info "Cluster: $CLUSTER_NAME"
+    log_info "Region: $REGION"
 }
 
 # Get service names (ADOT runs as sidecar, not separate service)
@@ -73,8 +154,6 @@ get_service_names() {
 # Scale all services to 0
 scale_down_all() {
     log_info "Scaling down all Temporal services to 0..."
-    
-    read_terraform_config
     
     local services
     services=($(get_service_names))
@@ -106,16 +185,22 @@ scale_down_all() {
 clean_membership() {
     log_info "Cleaning cluster_membership table in DSQL..."
     
-    read_terraform_config
-    
     # Get DSQL endpoint from Terraform
+    local env_dir="$PROJECT_ROOT/terraform/envs/$ENVIRONMENT"
+    cd "$env_dir"
+    
     local dsql_endpoint
-    if [ -f "$TERRAFORM_DIR/terraform.tfvars" ]; then
-        dsql_endpoint=$(grep -E "^dsql_cluster_endpoint" "$TERRAFORM_DIR/terraform.tfvars" | cut -d'"' -f2 || echo "")
-    fi
+    dsql_endpoint=$(terraform output -raw dsql_cluster_endpoint 2>/dev/null) || {
+        # Try to get from tfvars
+        if [ -f "terraform.tfvars" ]; then
+            dsql_endpoint=$(grep -E "^dsql_cluster_endpoint" terraform.tfvars | cut -d'"' -f2 || echo "")
+        fi
+    }
+    
+    cd "$PROJECT_ROOT"
     
     if [ -z "$dsql_endpoint" ]; then
-        log_warn "Could not get DSQL endpoint from terraform.tfvars."
+        log_warn "Could not get DSQL endpoint from terraform."
         log_warn "Please clean cluster_membership manually."
         log_warn "Run: DELETE FROM cluster_membership;"
         return 1
@@ -132,21 +217,17 @@ clean_membership() {
 wait_for_ec2() {
     log_info "Waiting for EC2 instances to register with ECS cluster..."
     
-    read_terraform_config
-    
     local max_attempts=30
     local attempt=0
     
-    # Read expected instance count from terraform.tfvars, default to 6
-    local expected_instances=6
-    if [ -f "$TERRAFORM_DIR/terraform.tfvars" ]; then
-        local tf_count
-        # Extract just the number after the = sign
-        tf_count=$(grep -E "^ec2_instance_count\s*=" "$TERRAFORM_DIR/terraform.tfvars" | sed 's/.*=\s*//' | tr -d ' ' || echo "6")
-        if [ -n "$tf_count" ] && [ "$tf_count" -eq "$tf_count" ] 2>/dev/null; then
-            expected_instances="$tf_count"
-        fi
-    fi
+    # Read expected instance count from terraform output
+    local env_dir="$PROJECT_ROOT/terraform/envs/$ENVIRONMENT"
+    cd "$env_dir"
+    
+    local expected_instances
+    expected_instances=$(terraform output -raw ec2_instance_count 2>/dev/null) || expected_instances=6
+    
+    cd "$PROJECT_ROOT"
     
     while [ "$attempt" -lt "$max_attempts" ]; do
         local instance_count
@@ -178,8 +259,6 @@ wait_for_ec2() {
 # Scale up services one at a time
 scale_up_services() {
     log_info "Scaling up Temporal services..."
-    
-    read_terraform_config
     
     # Production service counts (ADOT runs as sidecar, not separate service)
     # Order matters: History first for shard ownership, then Matching, Frontend, Worker, UI
@@ -222,8 +301,6 @@ scale_up_services() {
 force_new_deployment() {
     log_info "Forcing new deployment for all services..."
     
-    read_terraform_config
-    
     local services
     services=($(get_service_names))
     
@@ -242,8 +319,6 @@ force_new_deployment() {
 
 # Show cluster status
 show_status() {
-    read_terraform_config
-    
     log_info "Cluster: $CLUSTER_NAME"
     log_info "Region: $REGION"
     echo ""
@@ -299,7 +374,21 @@ recover() {
 
 # Main execution
 main() {
-    case "${1:-}" in
+    # Parse arguments
+    if [ $# -lt 2 ]; then
+        show_usage
+    fi
+    
+    ENVIRONMENT="$1"
+    COMMAND="$2"
+    
+    # Validate environment
+    validate_environment "$ENVIRONMENT"
+    
+    # Read terraform config
+    read_terraform_config
+    
+    case "$COMMAND" in
         scale-down)
             scale_down_all
             ;;
@@ -322,24 +411,8 @@ main() {
             recover
             ;;
         *)
-            echo "Usage: $0 {scale-down|clean-membership|wait-ec2|scale-up|force-deploy|status|recover}"
-            echo ""
-            echo "Commands:"
-            echo "  scale-down       - Scale all services to 0"
-            echo "  clean-membership - Prompt to clean cluster_membership table"
-            echo "  wait-ec2         - Wait for EC2 instances to register"
-            echo "  scale-up         - Scale up services one at a time"
-            echo "  force-deploy     - Force new deployment for all services"
-            echo "  status           - Show cluster and service status"
-            echo "  recover          - Full crash loop recovery"
-            echo ""
-            echo "Environment variables:"
-            echo "  CLUSTER_NAME     - ECS cluster name"
-            echo "  AWS_REGION       - AWS region"
-            echo "  PROJECT_NAME     - Project name prefix"
-            echo ""
-            echo "Note: Configuration is also read from terraform/terraform.tfvars if present."
-            exit 1
+            log_error "Unknown command: $COMMAND"
+            show_usage
             ;;
     esac
     

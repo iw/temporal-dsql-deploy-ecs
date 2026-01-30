@@ -2,38 +2,164 @@
 set -euo pipefail
 
 # Setup OpenSearch Provisioned for Temporal visibility store
-# This script initializes the OpenSearch index using temporal-elasticsearch-tool
-# For AWS OpenSearch Provisioned, this should be run from an ECS task with IAM permissions
-# or locally with AWS credentials configured
+#
+# Usage:
+#   ./scripts/setup-opensearch.sh <environment> [OPTIONS]
+#
+# Arguments:
+#   environment        Environment to operate on (dev, bench, prod)
+#
+# Options:
+#   --region REGION    AWS region (default: from terraform output)
+#   --index INDEX      Override visibility index name
+#   -h, --help         Show this help message
+#
+# Examples:
+#   ./scripts/setup-opensearch.sh dev
+#   ./scripts/setup-opensearch.sh bench --region eu-west-1
+#   ./scripts/setup-opensearch.sh prod --index temporal_visibility_v1_prod
+#
+# Prerequisites:
+#   - awscurl installed (pip install awscurl)
+#   - AWS credentials configured
+#   - Terraform applied for the environment
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-echo "=== Setting up OpenSearch Provisioned for Temporal Visibility ==="
-echo ""
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# Load environment variables
-if [ -f ".env" ]; then
-    source .env
-    echo "✅ Loaded environment from .env"
-else
-    echo "⚠️  No .env file found, using environment variables"
-fi
+# Available environments
+AVAILABLE_ENVS=("dev" "bench" "prod")
 
-# Configuration for AWS OpenSearch Provisioned
-OS_HOST="${TEMPORAL_OPENSEARCH_HOST:-}"
-OS_PORT="${TEMPORAL_OPENSEARCH_PORT:-443}"
-OS_SCHEME="${TEMPORAL_OPENSEARCH_SCHEME:-https}"
-OS_VISIBILITY_INDEX="${TEMPORAL_OPENSEARCH_INDEX:-temporal_visibility_v1_dev}"
-OS_VERSION="${TEMPORAL_OPENSEARCH_VERSION:-v8}"
-AWS_REGION="${AWS_REGION:-eu-west-1}"
+# Default values
+ENVIRONMENT=""
+AWS_REGION=""
+OS_VISIBILITY_INDEX=""
 
-if [ -z "$OS_HOST" ]; then
-    echo "❌ TEMPORAL_OPENSEARCH_HOST is not set"
-    echo "Please set the OpenSearch domain endpoint in .env or environment"
+# Function to show usage
+show_usage() {
+    head -24 "$0" | tail -22
+    exit 0
+}
+
+# Function to validate environment
+validate_environment() {
+    local env="$1"
+    local env_dir="terraform/envs/$env"
+    
+    local valid=false
+    for available_env in "${AVAILABLE_ENVS[@]}"; do
+        if [ "$env" = "$available_env" ]; then
+            valid=true
+            break
+        fi
+    done
+    
+    if [ "$valid" = false ]; then
+        echo -e "${RED}Error: Invalid environment '$env'${NC}"
+        echo ""
+        echo "Available environments: ${AVAILABLE_ENVS[*]}"
+        exit 1
+    fi
+    
+    if [ ! -d "$env_dir" ]; then
+        echo -e "${RED}Error: Environment directory not found: $env_dir${NC}"
+        exit 1
+    fi
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        dev|bench|prod)
+            if [ -z "$ENVIRONMENT" ]; then
+                ENVIRONMENT="$1"
+            fi
+            shift
+            ;;
+        --region)
+            AWS_REGION="$2"
+            shift 2
+            ;;
+        --index)
+            OS_VISIBILITY_INDEX="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_usage
+            ;;
+        *)
+            if [ -z "$ENVIRONMENT" ] && [[ ! "$1" =~ ^-- ]]; then
+                echo -e "${RED}Error: Invalid environment '$1'${NC}"
+                echo ""
+                echo "Available environments: ${AVAILABLE_ENVS[*]}"
+                exit 1
+            else
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+# Validate environment is provided
+if [ -z "$ENVIRONMENT" ]; then
+    echo -e "${RED}Error: Environment is required${NC}"
+    echo ""
+    echo "Usage: $0 <environment> [OPTIONS]"
+    echo ""
+    echo "Available environments: ${AVAILABLE_ENVS[*]}"
     exit 1
 fi
 
+validate_environment "$ENVIRONMENT"
+
+ENV_DIR="terraform/envs/$ENVIRONMENT"
+
+echo "=== Setting up OpenSearch for Temporal Visibility ==="
+echo "Environment: $ENVIRONMENT"
+echo ""
+
+# Get configuration from Terraform outputs
+echo -e "${BLUE}Reading configuration from Terraform...${NC}"
+cd "$PROJECT_ROOT/$ENV_DIR"
+
+# Get OpenSearch endpoint
+OS_ENDPOINT=$(terraform output -raw opensearch_endpoint 2>/dev/null) || {
+    echo -e "${RED}Error: Could not get opensearch_endpoint from terraform output${NC}"
+    echo "Make sure terraform has been applied for the $ENVIRONMENT environment"
+    exit 1
+}
+
+# Get region from terraform if not provided
+if [ -z "$AWS_REGION" ]; then
+    AWS_REGION=$(terraform output -raw region 2>/dev/null) || AWS_REGION="eu-west-1"
+fi
+
+# Get visibility index from terraform if not provided
+if [ -z "$OS_VISIBILITY_INDEX" ]; then
+    OS_VISIBILITY_INDEX=$(terraform output -raw opensearch_visibility_index 2>/dev/null) || {
+        # Fallback to environment-specific default
+        OS_VISIBILITY_INDEX="temporal_visibility_v1_${ENVIRONMENT}"
+    }
+fi
+
+cd "$PROJECT_ROOT"
+
+# Parse endpoint into host
+OS_HOST="$OS_ENDPOINT"
+OS_PORT="443"
+OS_SCHEME="https"
+OS_VERSION="v8"
+
+echo -e "${GREEN}✓ Configuration loaded${NC}"
+echo ""
 echo "OpenSearch Configuration:"
 echo "  Endpoint: $OS_SCHEME://$OS_HOST:$OS_PORT"
 echo "  Index: $OS_VISIBILITY_INDEX"
@@ -51,7 +177,7 @@ elif command -v temporal-elasticsearch-tool >/dev/null 2>&1; then
     TEMPORAL_ES_TOOL="temporal-elasticsearch-tool"
 fi
 
-# Function to make AWS SigV4 signed requests using awscurl or curl with IAM
+# Function to make AWS SigV4 signed requests using awscurl
 make_signed_request() {
     local method="$1"
     local path="$2"
@@ -59,31 +185,19 @@ make_signed_request() {
     
     local url="$OS_SCHEME://$OS_HOST:$OS_PORT$path"
     
-    # Check if awscurl is available (preferred for local development)
-    if command -v awscurl >/dev/null 2>&1; then
-        if [ -n "$data" ]; then
-            awscurl --service es --region "$AWS_REGION" \
-                -X "$method" "$url" \
-                -H 'Content-Type: application/json' \
-                -d "$data"
-        else
-            awscurl --service es --region "$AWS_REGION" \
-                -X "$method" "$url"
-        fi
+    if ! command -v awscurl >/dev/null 2>&1; then
+        echo -e "${RED}Error: awscurl not found. Install with: pip install awscurl${NC}"
+        exit 1
+    fi
+    
+    if [ -n "$data" ]; then
+        awscurl --service es --region "$AWS_REGION" \
+            -X "$method" "$url" \
+            -H 'Content-Type: application/json' \
+            -d "$data"
     else
-        # Fallback: assume running in ECS with IAM role (uses instance metadata)
-        # This requires the AWS SDK or a signing library
-        echo "⚠️  awscurl not found. For local development, install: pip install awscurl"
-        echo "    When running in ECS, IAM role credentials are used automatically."
-        
-        # For ECS tasks, we can use curl if the OpenSearch domain allows the task role
-        if [ -n "$data" ]; then
-            curl -s -X "$method" "$url" \
-                -H 'Content-Type: application/json' \
-                -d "$data"
-        else
-            curl -s -X "$method" "$url"
-        fi
+        awscurl --service es --region "$AWS_REGION" \
+            -X "$method" "$url"
     fi
 }
 
@@ -101,24 +215,24 @@ if [ -n "$TEMPORAL_ES_TOOL" ]; then
     until make_signed_request "GET" "/_cluster/health?wait_for_status=yellow&timeout=5s" 2>/dev/null | grep -q '"status"'; do
         attempt=$((attempt + 1))
         if [ $attempt -ge $max_attempts ]; then
-            echo "❌ OpenSearch did not become ready after $max_attempts attempts"
+            echo -e "${RED}❌ OpenSearch did not become ready after $max_attempts attempts${NC}"
             exit 1
         fi
         echo "  Waiting... (attempt $attempt/$max_attempts)"
         sleep 5
     done
-    echo "✅ OpenSearch is ready"
+    echo -e "${GREEN}✓ OpenSearch is ready${NC}"
     echo ""
     
     # Step 1: Setup schema (creates templates and cluster settings)
     echo "Step 1: Setting up OpenSearch schema..."
     for i in 1 2 3; do
         if $TEMPORAL_ES_TOOL --ep "$OS_SCHEME://$OS_HOST:$OS_PORT" setup-schema 2>&1; then
-            echo "✅ Schema setup completed"
+            echo -e "${GREEN}✓ Schema setup completed${NC}"
             break
         else
             if [ $i -eq 3 ]; then
-                echo "❌ Schema setup failed after 3 attempts"
+                echo -e "${RED}❌ Schema setup failed after 3 attempts${NC}"
                 exit 1
             fi
             echo "  Retrying schema setup... (attempt $((i+1))/3)"
@@ -130,17 +244,17 @@ if [ -n "$TEMPORAL_ES_TOOL" ]; then
     # Step 2: Create visibility index
     echo "Step 2: Creating visibility index..."
     $TEMPORAL_ES_TOOL --ep "$OS_SCHEME://$OS_HOST:$OS_PORT" create-index --index "$OS_VISIBILITY_INDEX"
-    echo "✅ Index '$OS_VISIBILITY_INDEX' created successfully"
+    echo -e "${GREEN}✓ Index '$OS_VISIBILITY_INDEX' created successfully${NC}"
     echo ""
     
     # Step 3: Verify setup with ping
     echo "Step 3: Verifying OpenSearch connectivity..."
     $TEMPORAL_ES_TOOL --ep "$OS_SCHEME://$OS_HOST:$OS_PORT" ping
-    echo "✅ OpenSearch connectivity verified"
+    echo -e "${GREEN}✓ OpenSearch connectivity verified${NC}"
     echo ""
     
 else
-    echo "=== Using curl/awscurl for OpenSearch setup ==="
+    echo "=== Using awscurl for OpenSearch setup ==="
     echo "Note: temporal-elasticsearch-tool not found, using REST API directly"
     echo ""
     
@@ -152,13 +266,13 @@ else
     until make_signed_request "GET" "/_cluster/health?wait_for_status=yellow&timeout=5s" 2>/dev/null | grep -q '"status"'; do
         attempt=$((attempt + 1))
         if [ $attempt -ge $max_attempts ]; then
-            echo "❌ OpenSearch did not become ready after $max_attempts attempts"
+            echo -e "${RED}❌ OpenSearch did not become ready after $max_attempts attempts${NC}"
             exit 1
         fi
         echo "  Waiting... (attempt $attempt/$max_attempts)"
         sleep 5
     done
-    echo "✅ OpenSearch is ready"
+    echo -e "${GREEN}✓ OpenSearch is ready${NC}"
     echo ""
     
     # Step 2: Create index template
@@ -201,7 +315,7 @@ else
     
     make_signed_request "PUT" "/_template/temporal_visibility_v1_template" "$TEMPLATE_BODY"
     echo ""
-    echo "✅ Index template created"
+    echo -e "${GREEN}✓ Index template created${NC}"
     echo ""
     
     # Step 3: Create index if it doesn't exist
@@ -210,9 +324,9 @@ else
     
     if echo "$INDEX_EXISTS" | grep -q "not_found\|404"; then
         make_signed_request "PUT" "/$OS_VISIBILITY_INDEX" '{}'
-        echo "✅ Index '$OS_VISIBILITY_INDEX' created"
+        echo -e "${GREEN}✓ Index '$OS_VISIBILITY_INDEX' created${NC}"
     else
-        echo "✅ Index '$OS_VISIBILITY_INDEX' already exists"
+        echo -e "${GREEN}✓ Index '$OS_VISIBILITY_INDEX' already exists${NC}"
     fi
     echo ""
 fi
@@ -223,7 +337,7 @@ echo "=== Final Verification ==="
 # Check cluster health
 echo "Cluster health:"
 make_signed_request "GET" "/_cat/health?v" || {
-    echo "❌ Failed to get cluster health"
+    echo -e "${RED}❌ Failed to get cluster health${NC}"
     exit 1
 }
 echo ""
@@ -231,7 +345,7 @@ echo ""
 # Check index status
 echo "Index status:"
 make_signed_request "GET" "/_cat/indices/$OS_VISIBILITY_INDEX?v" || {
-    echo "❌ Failed to get index information"
+    echo -e "${RED}❌ Failed to get index information${NC}"
     exit 1
 }
 echo ""
@@ -244,28 +358,13 @@ SEARCH_RESULT=$(make_signed_request "POST" "/$OS_VISIBILITY_INDEX/_search" '{
 }')
 
 if echo "$SEARCH_RESULT" | grep -q '"hits"'; then
-    echo "✅ Search functionality is working"
+    echo -e "${GREEN}✓ Search functionality is working${NC}"
     DOC_COUNT=$(echo "$SEARCH_RESULT" | grep -o '"value":[0-9]*' | head -1 | cut -d: -f2 || echo "0")
     echo "Current document count: $DOC_COUNT"
 else
-    echo "⚠️  Search test returned unexpected result (may be empty index)"
-    echo "Response: $SEARCH_RESULT"
+    echo -e "${YELLOW}⚠️  Search test returned unexpected result (may be empty index)${NC}"
 fi
 echo ""
 
-echo "🎉 OpenSearch Provisioned setup completed successfully!"
-echo ""
-echo "=== Configuration for Temporal ==="
-echo "Add these to your Temporal configuration:"
-echo ""
-echo "  TEMPORAL_OPENSEARCH_HOST=$OS_HOST"
-echo "  TEMPORAL_OPENSEARCH_PORT=$OS_PORT"
-echo "  TEMPORAL_OPENSEARCH_SCHEME=$OS_SCHEME"
-echo "  TEMPORAL_OPENSEARCH_INDEX=$OS_VISIBILITY_INDEX"
-echo "  TEMPORAL_OPENSEARCH_VERSION=$OS_VERSION"
-echo ""
-echo "=== Next Steps ==="
-echo "1. Ensure Temporal services have IAM permissions for es:ESHttp*"
-echo "2. Configure awsRequestSigning in Temporal persistence config"
-echo "3. Start Temporal services"
+echo -e "${GREEN}🎉 OpenSearch setup completed successfully for $ENVIRONMENT environment!${NC}"
 echo ""

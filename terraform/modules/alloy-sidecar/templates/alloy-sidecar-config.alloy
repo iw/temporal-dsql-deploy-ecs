@@ -1,0 +1,188 @@
+// -----------------------------------------------------------------------------
+// Grafana Alloy Sidecar Configuration for Temporal Services
+// -----------------------------------------------------------------------------
+// This configuration is used by Alloy sidecars running alongside each Temporal
+// service container. Each sidecar:
+// - Collects logs from Docker containers via loki.source.docker
+// - Scrapes Prometheus metrics from localhost:9090
+// - Sends logs to Loki via loki.write
+// - Sends metrics to AMP via prometheus.remote_write
+//
+// Uses ECS metadata for unique task_id and cluster labels.
+// Requirements: 3.3, 3.5, 3.6, 3.7, 3.8
+// -----------------------------------------------------------------------------
+
+// ============================================================================
+// LOGGING PIPELINE
+// ============================================================================
+
+// Discover Docker containers on this host
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  
+  // Only discover containers in the same task (filter by task ID)
+  filter {
+    name   = "label"
+    values = ["com.amazonaws.ecs.task-arn"]
+  }
+}
+
+// Relabel discovered targets to extract useful metadata
+discovery.relabel "docker_targets" {
+  targets = discovery.docker.containers.targets
+  
+  // Extract container name from Docker labels
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container_name"
+  }
+  
+  // Extract ECS task ID from task ARN label
+  rule {
+    source_labels = ["__meta_docker_container_label_com_amazonaws_ecs_task_arn"]
+    regex         = ".*/([^/]+)$"
+    target_label  = "task_id"
+  }
+  
+  // Drop the Alloy container itself to avoid log loops
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = ".*alloy.*"
+    action        = "drop"
+  }
+  
+  // Drop the Service Connect sidecar
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = ".*ecs-service-connect.*"
+    action        = "drop"
+  }
+}
+
+// Read logs from Docker containers
+loki.source.docker "docker_logs" {
+  host    = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.docker_targets.output
+  
+  forward_to = [loki.process.enrich_labels.receiver]
+  
+  // Refresh targets every 5 seconds
+  refresh_interval = "5s"
+}
+
+// Process and enrich logs with labels
+loki.process "enrich_labels" {
+  forward_to = [loki.write.loki.receiver]
+  
+  // Add static labels from environment variables
+  stage.static_labels {
+    values = {
+      service_name = "${service_name}",
+      cluster      = "${cluster_name}",
+      job          = "temporal",
+    }
+  }
+  
+  // Try to parse JSON logs (Temporal uses structured logging)
+  // drop_malformed = false allows plain text logs (e.g., benchmark-worker) to pass through
+  stage.json {
+    expressions = {
+      level   = "level",
+      msg     = "msg",
+      caller  = "caller",
+      ts      = "ts",
+    }
+    drop_malformed = false
+  }
+  
+  // Add level as a label for filtering
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+  
+  // Add timestamp from JSON if available
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+}
+
+// Write logs to Loki
+loki.write "loki" {
+  endpoint {
+    url = "${loki_endpoint}"
+    
+    // Retry configuration for resilience
+    retry_on_http_429   = true
+    min_backoff_period  = "500ms"
+    max_backoff_period  = "5m"
+    max_backoff_retries = 10
+  }
+  
+  // External labels applied to all logs
+  external_labels = {
+    source = "alloy-sidecar",
+  }
+}
+
+// ============================================================================
+// METRICS PIPELINE
+// ============================================================================
+
+// Scrape Prometheus metrics from main container
+prometheus.scrape "temporal" {
+  targets = [
+    {"__address__" = "localhost:9090"},
+  ]
+  
+  forward_to = [prometheus.relabel.add_labels.receiver]
+  
+  job_name        = "${service_name}"
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+}
+
+// Add service labels to metrics
+prometheus.relabel "add_labels" {
+  forward_to = [prometheus.remote_write.amp.receiver]
+  
+  // Add service_name label
+  rule {
+    target_label = "service_name"
+    replacement  = "${service_name}"
+  }
+  
+  // Add cluster label
+  rule {
+    target_label = "cluster"
+    replacement  = "${cluster_name}"
+  }
+  
+  // Add task_id from environment (set at runtime)
+  rule {
+    target_label = "task_id"
+    replacement  = env("ECS_TASK_ID")
+  }
+}
+
+// Write metrics to Amazon Managed Prometheus
+prometheus.remote_write "amp" {
+  endpoint {
+    url = "${amp_remote_write_endpoint}"
+    
+    // SigV4 authentication for AMP
+    sigv4 {
+      region = "${aws_region}"
+    }
+    
+    // Queue configuration for buffering
+    queue_config {
+      capacity          = 10000
+      max_shards        = 50
+      max_samples_per_send = 2000
+    }
+  }
+}

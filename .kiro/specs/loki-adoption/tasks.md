@@ -6,34 +6,34 @@ This implementation plan covers replacing CloudWatch Logs with Grafana Loki for 
 
 ## Tasks
 
-- [ ] 1. Create Loki Infrastructure
-  - [ ] 1.1 Create S3 bucket for Loki storage
+- [x] 1. Create Loki Infrastructure
+  - [x] 1.1 Create S3 bucket for Loki storage
     - Create `loki-s3.tf` with S3 bucket resource
     - Configure server-side encryption (SSE-S3)
     - Add lifecycle policy for retention + 1 day expiration
     - Disable versioning (append-only logs)
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
-  - [ ] 1.2 Create Loki IAM role and policy
+  - [x] 1.2 Create Loki IAM role and policy
     - Add Loki task role to `iam.tf`
     - Grant S3 read/write permissions to Loki bucket
     - Grant ECS task execution permissions
     - _Requirements: 2.6, 6.6_
 
-  - [ ] 1.3 Create Loki security group
+  - [x] 1.3 Create Loki security group
     - Add security group to `security-groups.tf`
     - Allow ingress on port 3100 from ECS instances
     - Allow ingress from Grafana security group
     - _Requirements: 6.3, 6.4_
 
-  - [ ] 1.4 Create Loki configuration template
+  - [x] 1.4 Create Loki configuration template
     - Create `templates/loki-config.yaml`
     - Configure S3 storage backend with TSDB
     - Set retention period from variable
     - Configure compactor for retention enforcement
     - _Requirements: 1.6, 1.7, 5.1, 5.2, 5.3_
 
-  - [ ] 1.5 Create Loki ECS task definition and service
+  - [x] 1.5 Create Loki ECS task definition and service
     - Create `loki.tf` with task definition
     - Use ARM64 architecture
     - Configure port 3100 for HTTP API
@@ -41,12 +41,12 @@ This implementation plan covers replacing CloudWatch Logs with Grafana Loki for 
     - Store config in SSM Parameter Store
     - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6_
 
-  - [ ] 1.6 Add Loki to Service Connect namespace
+  - [x] 1.6 Add Loki to Service Connect namespace
     - Configure Service Connect for Loki service
     - Register DNS name `loki`
     - _Requirements: 1.4_
 
-  - [ ] 1.7 Add Loki variables to variables.tf
+  - [x] 1.7 Add Loki variables to variables.tf
     - Add `loki_enabled`, `loki_cpu`, `loki_memory`, `loki_count`
     - Add `loki_retention_days`, `loki_image`
     - Add `alloy_image` variable
@@ -58,8 +58,8 @@ This implementation plan covers replacing CloudWatch Logs with Grafana Loki for 
   - Test `/ready` endpoint via ECS Exec
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 3. Create Alloy Sidecar Configuration
-  - [ ] 3.1 Create Alloy configuration template
+- [x] 3. Create Alloy Sidecar Configuration
+  - [x] 3.1 Create Alloy configuration template
     - Create `templates/alloy-sidecar-config.alloy`
     - Configure `loki.source.docker` for log collection
     - Configure `prometheus.scrape` for metrics
@@ -68,7 +68,7 @@ This implementation plan covers replacing CloudWatch Logs with Grafana Loki for 
     - Add label enrichment for service_name, task_id, cluster
     - _Requirements: 3.3, 3.5, 3.6, 3.7, 3.8_
 
-  - [ ] 3.2 Create Alloy sidecar Terraform locals
+  - [x] 3.2 Create Alloy sidecar Terraform locals
     - Create `alloy-sidecar.tf`
     - Define Alloy container definition template
     - Configure Docker socket mount for log access
@@ -76,37 +76,37 @@ This implementation plan covers replacing CloudWatch Logs with Grafana Loki for 
     - Configure SSM parameter for config
     - _Requirements: 3.1, 3.4, 3.10, 3.11, 3.12_
 
-  - [ ] 3.3 Create SSM parameters for Alloy configs
+  - [x] 3.3 Create SSM parameters for Alloy configs
     - Create per-service SSM parameters (history, matching, frontend, worker)
     - Template with service-specific labels
     - _Requirements: 3.12_
 
-- [ ] 4. Migrate Temporal Services to Alloy
-  - [ ] 4.1 Update temporal-history.tf
+- [x] 4. Migrate Temporal Services to Alloy
+  - [x] 4.1 Update temporal-history.tf
     - Replace ADOT sidecar with Alloy sidecar
     - Add Docker socket volume mount
     - Update container definitions
     - _Requirements: 3.1, 3.2_
 
-  - [ ] 4.2 Update temporal-matching.tf
+  - [x] 4.2 Update temporal-matching.tf
     - Replace ADOT sidecar with Alloy sidecar
     - Add Docker socket volume mount
     - Update container definitions
     - _Requirements: 3.1, 3.2_
 
-  - [ ] 4.3 Update temporal-frontend.tf
+  - [x] 4.3 Update temporal-frontend.tf
     - Replace ADOT sidecar with Alloy sidecar
     - Add Docker socket volume mount
     - Update container definitions
     - _Requirements: 3.1, 3.2_
 
-  - [ ] 4.4 Update temporal-worker.tf
+  - [x] 4.4 Update temporal-worker.tf
     - Replace ADOT sidecar with Alloy sidecar
     - Add Docker socket volume mount
     - Update container definitions
     - _Requirements: 3.1, 3.2_
 
-  - [ ] 4.5 Update benchmark-worker.tf (if exists)
+  - [x] 4.5 Update benchmark-worker.tf (if exists)
     - Replace ADOT sidecar with Alloy sidecar
     - Add Docker socket volume mount
     - _Requirements: 3.1, 3.2_
@@ -118,19 +118,19 @@ This implementation plan covers replacing CloudWatch Logs with Grafana Loki for 
   - Check Alloy sidecar logs for errors
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 6. Configure Grafana Integration
-  - [ ] 6.1 Create Loki datasource provisioning file
+- [x] 6. Configure Grafana Integration
+  - [x] 6.1 Create Loki datasource provisioning file
     - Create `grafana/provisioning/datasources/loki.yaml`
     - Configure URL as `http://loki:3100`
     - Set appropriate timeout and max lines
     - _Requirements: 4.1, 4.2, 4.3_
 
-  - [ ] 6.2 Update Grafana Dockerfile
+  - [x] 6.2 Update Grafana Dockerfile
     - Add Loki datasource to provisioning
     - Rebuild Grafana image
     - _Requirements: 4.4_
 
-  - [ ] 6.3 Update grafana.tf if needed
+  - [x] 6.3 Update grafana.tf if needed
     - Ensure Grafana can reach Loki via Service Connect
     - Add Loki security group to Grafana network config
     - _Requirements: 4.1_
@@ -142,24 +142,24 @@ This implementation plan covers replacing CloudWatch Logs with Grafana Loki for 
   - Test LogQL query in Grafana Explore
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 8. Cleanup and Documentation
-  - [ ] 8.1 Remove ADOT sidecar configuration
+- [x] 8. Cleanup and Documentation
+  - [x] 8.1 Remove ADOT sidecar configuration
     - Delete `adot-sidecar.tf`
     - Delete `templates/adot-sidecar-config.yaml`
     - Remove ADOT SSM parameters
     - _Requirements: 3.2_
 
-  - [ ] 8.2 Update outputs.tf
+  - [x] 8.2 Update outputs.tf
     - Add Loki endpoint output
     - Add Loki S3 bucket output
     - _Requirements: N/A_
 
-  - [ ] 8.3 Update terraform.tfvars.example
+  - [x] 8.3 Update terraform.tfvars.example
     - Add Loki configuration examples
     - Document Alloy image version
     - _Requirements: N/A_
 
-  - [ ] 8.4 Keep CloudWatch Log Groups (do not delete)
+  - [x] 8.4 Keep CloudWatch Log Groups (do not delete)
     - Verify CloudWatch log groups remain for rollback
     - Document that CloudWatch can be re-enabled if needed
     - _Requirements: 8.3, 8.5_

@@ -6,31 +6,31 @@
 # It can fetch results for a specific task or the most recent benchmark run.
 #
 # Usage:
-#   ./scripts/get-benchmark-results.sh [OPTIONS]
+#   ./scripts/get-benchmark-results.sh <environment> [OPTIONS]
+#
+# Arguments:
+#   environment             Environment to query (dev, bench, prod)
 #
 # Options:
 #   --task-id ID            Task ID to retrieve results for
 #   --task-arn ARN          Full task ARN to retrieve results for
-#   --latest                Get results from the most recent benchmark task
-#   --from-terraform        Read cluster config from terraform.tfvars
+#   --latest                Get results from the most recent benchmark task (default)
 #   --json                  Output only the JSON results (for piping)
 #   --summary               Show only the summary (default)
 #   --full                  Show full log output
 #   -h, --help              Show this help message
 #
 # Examples:
-#   ./scripts/get-benchmark-results.sh --latest --from-terraform
-#   ./scripts/get-benchmark-results.sh --task-id abc123def456 --from-terraform
-#   ./scripts/get-benchmark-results.sh --latest --json --from-terraform | jq .
+#   ./scripts/get-benchmark-results.sh bench
+#   ./scripts/get-benchmark-results.sh bench --task-id abc123def456
+#   ./scripts/get-benchmark-results.sh bench --json | jq .
 #
-# Requirements: 6.1, 6.2
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TERRAFORM_DIR="${PROJECT_ROOT}/terraform"
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,15 +39,18 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Available environments
+AVAILABLE_ENVS=("dev" "bench" "prod")
+
 # Default values
+ENVIRONMENT=""
 TASK_ID=""
 TASK_ARN=""
-GET_LATEST=false
-FROM_TERRAFORM=false
+GET_LATEST=true
 OUTPUT_JSON=false
 OUTPUT_SUMMARY=true
 OUTPUT_FULL=false
-AWS_REGION="${AWS_REGION:-eu-west-1}"
+AWS_REGION=""
 CLUSTER_NAME=""
 PROJECT_NAME=""
 LOG_GROUP_NAME=""
@@ -73,23 +76,44 @@ show_help() {
     exit 0
 }
 
+validate_environment() {
+    local env="$1"
+    local valid=false
+    for available_env in "${AVAILABLE_ENVS[@]}"; do
+        if [ "$env" = "$available_env" ]; then
+            valid=true
+            break
+        fi
+    done
+    
+    if [ "$valid" = false ]; then
+        log_error "Invalid environment '$env'"
+        echo "Available environments: ${AVAILABLE_ENVS[*]}" >&2
+        exit 1
+    fi
+}
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        dev|bench|prod)
+            if [ -z "$ENVIRONMENT" ]; then
+                ENVIRONMENT="$1"
+            fi
+            shift
+            ;;
         --task-id)
             TASK_ID="$2"
+            GET_LATEST=false
             shift 2
             ;;
         --task-arn)
             TASK_ARN="$2"
+            GET_LATEST=false
             shift 2
             ;;
         --latest)
             GET_LATEST=true
-            shift
-            ;;
-        --from-terraform)
-            FROM_TERRAFORM=true
             shift
             ;;
         --json)
@@ -111,32 +135,55 @@ while [[ $# -gt 0 ]]; do
             show_help
             ;;
         *)
-            log_error "Unknown option: $1"
-            exit 1
+            if [ -z "$ENVIRONMENT" ] && [[ ! "$1" =~ ^-- ]]; then
+                log_error "Invalid environment '$1'"
+                echo "Available environments: ${AVAILABLE_ENVS[*]}" >&2
+                exit 1
+            else
+                log_error "Unknown option: $1"
+                exit 1
+            fi
             ;;
     esac
 done
 
+# Validate environment
+if [ -z "$ENVIRONMENT" ]; then
+    log_error "Environment is required"
+    echo "" >&2
+    echo "Usage: $0 <environment> [OPTIONS]" >&2
+    echo "Available environments: ${AVAILABLE_ENVS[*]}" >&2
+    exit 1
+fi
+
+validate_environment "$ENVIRONMENT"
+
 # Read configuration from Terraform
 read_terraform_config() {
-    if [ ! -d "$TERRAFORM_DIR" ]; then
-        log_error "Terraform directory not found: $TERRAFORM_DIR"
+    local env_dir="$PROJECT_ROOT/terraform/envs/$ENVIRONMENT"
+    
+    if [ ! -d "$env_dir" ]; then
+        log_error "Environment directory not found: terraform/envs/$ENVIRONMENT"
         exit 1
     fi
-
-    if [ -f "$TERRAFORM_DIR/terraform.tfvars" ]; then
-        PROJECT_NAME=$(grep -E "^project_name" "$TERRAFORM_DIR/terraform.tfvars" | cut -d'"' -f2 || echo "temporal-dev")
-        TFVARS_REGION=$(grep -E "^region" "$TERRAFORM_DIR/terraform.tfvars" | cut -d'"' -f2 || true)
-        if [ -n "$TFVARS_REGION" ]; then
-            AWS_REGION="$TFVARS_REGION"
-        fi
-    else
-        PROJECT_NAME="temporal-dev"
-    fi
-
-    CLUSTER_NAME="${PROJECT_NAME}-cluster"
+    
+    cd "$env_dir"
+    
+    CLUSTER_NAME=$(terraform output -raw ecs_cluster_name 2>/dev/null) || {
+        log_error "Could not get cluster name from terraform output"
+        exit 1
+    }
+    
+    AWS_REGION=$(terraform output -raw region 2>/dev/null) || AWS_REGION="eu-west-1"
+    
+    # Extract project name from cluster name
+    PROJECT_NAME="${CLUSTER_NAME%-cluster}"
     LOG_GROUP_NAME="/ecs/${PROJECT_NAME}/benchmark"
+    
+    cd "$PROJECT_ROOT"
 }
+
+read_terraform_config
 
 # Get the latest benchmark task
 get_latest_task() {
@@ -342,14 +389,8 @@ display_full_logs() {
 
 # Main execution
 main() {
-    # Read Terraform configuration
-    if [ "$FROM_TERRAFORM" = true ]; then
-        read_terraform_config
-    else
-        PROJECT_NAME="${PROJECT_NAME:-temporal-dev}"
-        CLUSTER_NAME="${CLUSTER_NAME:-${PROJECT_NAME}-cluster}"
-        LOG_GROUP_NAME="${LOG_GROUP_NAME:-/ecs/${PROJECT_NAME}/benchmark}"
-    fi
+    log_info "Cluster: $CLUSTER_NAME"
+    log_info "Region: $AWS_REGION"
 
     # Determine task to retrieve
     if [ "$GET_LATEST" = true ]; then
@@ -357,12 +398,10 @@ main() {
     elif [ -n "$TASK_ARN" ]; then
         TASK_ID=$(echo "$TASK_ARN" | cut -d'/' -f3)
     elif [ -z "$TASK_ID" ]; then
-        log_error "Must specify --task-id, --task-arn, or --latest"
+        log_error "Must specify --task-id, --task-arn, or use --latest (default)"
         exit 1
     fi
 
-    log_info "Cluster: $CLUSTER_NAME"
-    log_info "Region: $AWS_REGION"
     log_info "Task ID: $TASK_ID"
 
     # Get task details

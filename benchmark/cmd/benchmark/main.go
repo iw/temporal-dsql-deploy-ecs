@@ -4,7 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,6 +20,12 @@ import (
 )
 
 func main() {
+	// Setup structured JSON logging
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -28,18 +34,18 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
-		log.Printf("Received signal %v, initiating graceful shutdown...", sig)
+		slog.Info("Received shutdown signal", "signal", sig.String())
 		cancel()
 	}()
 
 	if err := run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		slog.Error("Benchmark failed", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context) error {
-	log.Println("Temporal Benchmark Runner starting...")
+	slog.Info("Temporal Benchmark Runner starting")
 
 	// Parse configuration from environment variables
 	cfg, err := config.LoadFromEnv()
@@ -60,20 +66,21 @@ func run(ctx context.Context) error {
 		mode = "worker-only"
 	}
 
-	log.Printf("Configuration loaded:")
-	log.Printf("  Mode: %s", mode)
-	log.Printf("  Workflow Type: %s", cfg.WorkflowType)
-	log.Printf("  Target Rate: %.2f workflows/sec", cfg.TargetRate)
-	log.Printf("  Duration: %v", cfg.Duration)
-	log.Printf("  Ramp-up: %v", cfg.RampUpDuration)
-	log.Printf("  Worker Count: %d", cfg.WorkerCount)
-	log.Printf("  Iterations: %d", cfg.Iterations)
-	log.Printf("  Temporal Address: %s", cfg.TemporalAddress)
+	slog.Info("Configuration loaded",
+		"mode", mode,
+		"workflow_type", cfg.WorkflowType,
+		"target_rate", cfg.TargetRate,
+		"duration", cfg.Duration.String(),
+		"ramp_up", cfg.RampUpDuration.String(),
+		"worker_count", cfg.WorkerCount,
+		"iterations", cfg.Iterations,
+		"temporal_address", cfg.TemporalAddress,
+	)
 
 	// Check for early cancellation before connecting
 	select {
 	case <-ctx.Done():
-		log.Println("Shutdown requested before initialization completed")
+		slog.Info("Shutdown requested before initialization completed")
 		return nil
 	default:
 	}
@@ -85,7 +92,7 @@ func run(ctx context.Context) error {
 	sdkMetricsHandler := metrics.SDKMetricsHandler(metricsHandler.Registry())
 
 	// Create Temporal client with SDK metrics and retry logic
-	log.Printf("Connecting to Temporal at %s...", cfg.TemporalAddress)
+	slog.Info("Connecting to Temporal", "address", cfg.TemporalAddress)
 
 	var temporalClient client.Client
 	maxRetries := 30
@@ -108,7 +115,12 @@ func run(ctx context.Context) error {
 		}
 
 		if i < maxRetries-1 {
-			log.Printf("Connection attempt %d/%d failed: %v. Retrying in %v...", i+1, maxRetries, err, retryDelay)
+			slog.Warn("Connection attempt failed",
+				"attempt", i+1,
+				"max_retries", maxRetries,
+				"error", err,
+				"retry_delay", retryDelay.String(),
+			)
 			time.Sleep(retryDelay)
 		}
 	}
@@ -119,17 +131,17 @@ func run(ctx context.Context) error {
 	defer temporalClient.Close()
 
 	// Verify cluster health by checking system info
-	log.Println("Verifying Temporal cluster health...")
+	slog.Info("Verifying Temporal cluster health")
 	_, err = temporalClient.CheckHealth(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("Temporal cluster health check failed: %w", err)
 	}
-	log.Println("Temporal cluster is healthy")
+	slog.Info("Temporal cluster is healthy")
 
 	// Check for cancellation after health check
 	select {
 	case <-ctx.Done():
-		log.Println("Shutdown requested after health check")
+		slog.Info("Shutdown requested after health check")
 		return nil
 	default:
 	}
@@ -147,12 +159,12 @@ func run(ctx context.Context) error {
 	)
 
 	// Run the benchmark
-	log.Println("Starting benchmark execution...")
+	slog.Info("Starting benchmark execution")
 	result, err := benchmarkRunner.Run(ctx, cfg)
 	if err != nil {
 		// Check if it was a cancellation
 		if ctx.Err() != nil {
-			log.Println("Benchmark was cancelled")
+			slog.Info("Benchmark was cancelled")
 			return nil
 		}
 		return fmt.Errorf("benchmark execution failed: %w", err)
@@ -163,19 +175,18 @@ func run(ctx context.Context) error {
 
 	// Output results
 	if err := runner.OutputResults(result, cfg, namespace); err != nil {
-		log.Printf("Warning: failed to output results: %v", err)
+		slog.Warn("Failed to output results", "error", err)
 	}
 
 	// Cleanup benchmark workflows
-	log.Println("Cleaning up benchmark workflows...")
+	slog.Info("Cleaning up benchmark workflows")
 	if err := benchmarkRunner.Cleanup(ctx, namespace); err != nil {
-		log.Printf("Warning: cleanup failed: %v", err)
-		log.Printf("Manual cleanup may be required for namespace: %s", namespace)
+		slog.Warn("Cleanup failed", "error", err, "namespace", namespace)
 	} else {
-		log.Println("Cleanup completed successfully")
+		slog.Info("Cleanup completed successfully")
 	}
 
-	log.Println("Benchmark runner completed")
+	slog.Info("Benchmark runner completed")
 	return nil
 }
 
@@ -187,8 +198,10 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClie
 		namespace = "benchmark"
 	}
 
-	log.Printf("Starting worker-only mode for namespace: %s", namespace)
-	log.Printf("Task queue: %s", runner.DefaultTaskQueue)
+	slog.Info("Starting worker-only mode",
+		"namespace", namespace,
+		"task_queue", runner.DefaultTaskQueue,
+	)
 
 	// Start metrics server for worker metrics
 	if err := metricsHandler.StartServer(ctx, runner.MetricsPort); err != nil {
@@ -198,7 +211,7 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClie
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := metricsHandler.StopServer(shutdownCtx); err != nil {
-			log.Printf("Warning: failed to stop metrics server: %v", err)
+			slog.Warn("Failed to stop metrics server", "error", err)
 		}
 	}()
 
@@ -234,14 +247,14 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClie
 	if err := w.Start(); err != nil {
 		return fmt.Errorf("failed to start worker: %w", err)
 	}
-	log.Println("Worker started, waiting for tasks...")
+	slog.Info("Worker started, waiting for tasks")
 
 	// Wait for shutdown signal
 	<-ctx.Done()
-	log.Println("Shutdown signal received, stopping worker...")
+	slog.Info("Shutdown signal received, stopping worker")
 
 	w.Stop()
-	log.Println("Worker stopped")
+	slog.Info("Worker stopped")
 
 	return nil
 }

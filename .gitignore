@@ -6,7 +6,8 @@
 
 # Terraform variables with actual values (use terraform.tfvars.example as template)
 terraform.tfvars
-terraform/terraform.tfvars
+**/terraform.tfvars
+!*.tfvars.example
 
 # Crash log files
 crash.log
@@ -41,6 +42,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Benchmark binary
+benchmark/benchmark
 
 # Benchmark analysis docs (contain internal metrics)
 docs/6kst-benchmark-analysis.md

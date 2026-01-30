@@ -19,33 +19,23 @@ Terraform infrastructure for deploying Temporal workflow engine on AWS ECS on EC
 
 ```
 temporal-dsql-deploy-ecs/
-├── terraform/                    # Terraform infrastructure code
-│   ├── templates/                # Template files for configuration
-│   │   └── adot-config.yaml      # ADOT collector configuration template
-│   ├── main.tf                   # Provider configuration
-│   ├── vpc.tf                    # VPC, subnets, NAT Gateway, route tables
-│   ├── vpc-endpoints.tf          # VPC endpoints for AWS services
-│   ├── ecs-cluster.tf            # ECS cluster with Service Connect namespace
-│   ├── ec2-cluster.tf            # EC2 instances, ASGs, capacity providers, placement
-│   ├── benchmark.tf              # Benchmark generator task definition and security group
-│   ├── benchmark-worker.tf       # Benchmark worker service (processes workflows)
-│   ├── benchmark-ec2.tf          # Benchmark EC2 ASG and capacity provider (scale-from-zero)
-│   ├── temporal-history.tf       # History service task definition and ECS service
-│   ├── temporal-matching.tf      # Matching service task definition and ECS service
-│   ├── temporal-frontend.tf      # Frontend service task definition and ECS service
-│   ├── temporal-worker.tf        # Worker service task definition and ECS service
-│   ├── temporal-ui.tf            # UI service task definition and ECS service
-│   ├── grafana.tf                # Grafana task definition and ECS service
-│   ├── adot.tf                   # ADOT Collector for metrics scraping
-│   ├── opensearch.tf             # OpenSearch Provisioned domain and setup task
-│   ├── prometheus.tf             # Amazon Managed Prometheus workspace
-│   ├── iam.tf                    # IAM roles and policies
-│   ├── security-groups.tf        # Security group definitions
-│   ├── secrets.tf                # Secrets Manager data source
-│   ├── cloudwatch.tf             # CloudWatch Log Groups
-│   ├── variables.tf              # Input variable definitions with validation
-│   ├── outputs.tf                # Output definitions including ECS Exec commands
-│   ├── terraform.tfvars.example  # Example configuration file
+├── terraform/                    # Terraform infrastructure code (modular)
+│   ├── modules/                  # Reusable Terraform modules
+│   │   ├── alloy-sidecar/        # Alloy sidecar for log collection
+│   │   ├── benchmark/            # Benchmark generator and worker
+│   │   ├── dynamodb/             # DynamoDB tables for rate limiting
+│   │   ├── ec2-capacity/         # EC2 ASG and capacity provider
+│   │   ├── ecs-cluster/          # ECS cluster and Service Connect
+│   │   ├── iam/                  # IAM roles and policies
+│   │   ├── observability/        # Loki, Grafana, Prometheus
+│   │   ├── opensearch/           # OpenSearch domain
+│   │   ├── temporal-service/     # Generic Temporal service module
+│   │   ├── temporal-ui/          # Temporal UI service
+│   │   └── vpc/                  # VPC, subnets, endpoints
+│   ├── envs/                     # Environment-specific configurations
+│   │   ├── dev/                  # Development environment
+│   │   ├── bench/                # Benchmark environment
+│   │   └── prod/                 # Production environment
 │   └── .gitignore                # Terraform-specific gitignore
 ├── benchmark/                    # Benchmark runner Go application
 │   ├── cmd/benchmark/            # Main entry point
@@ -106,30 +96,29 @@ temporal-dsql-deploy-ecs/
 
 ## Key Files and Their Purposes
 
-### Terraform Files
+### Terraform Modules
 
-| File | Purpose |
-|------|---------|
-| `main.tf` | AWS provider configuration with region variable |
-| `vpc.tf` | VPC with private subnets, NAT Gateway for outbound access |
-| `vpc-endpoints.tf` | Interface endpoints (ECR, SSM, Logs, etc.) and S3 gateway endpoint |
-| `ecs-cluster.tf` | ECS cluster with Container Insights, Service Connect namespace |
-| `ec2-cluster.tf` | Launch template, single ASG with EC2 instances, capacity provider |
-| `dynamodb.tf` | DynamoDB table for distributed DSQL connection rate limiting |
-| `benchmark.tf` | Benchmark generator task definition, IAM role, security group |
-| `benchmark-worker.tf` | Benchmark worker ECS service (processes benchmark workflows) |
-| `benchmark-ec2.tf` | Benchmark ASG (scale-from-zero) and capacity provider |
-| `temporal-*.tf` | Individual Temporal service task definitions and ECS services |
-| `grafana.tf` | Grafana deployment with Secrets Manager integration |
-| `adot.tf` | ADOT Collector for metrics scraping and remote write to AMP |
-| `opensearch.tf` | OpenSearch domain and one-time schema setup task |
-| `prometheus.tf` | Amazon Managed Prometheus workspace |
-| `iam.tf` | Task execution role, task roles with least-privilege policies |
-| `security-groups.tf` | Per-service security groups with inter-service rules |
-| `secrets.tf` | Data source for externally-created Grafana secret |
-| `cloudwatch.tf` | Log groups for each service and ECS Exec |
-| `variables.tf` | All input variables with descriptions and validation |
-| `outputs.tf` | Resource identifiers, endpoints, ECS Exec commands |
+| Module | Purpose |
+|--------|---------|
+| `modules/vpc/` | VPC with private subnets, NAT Gateway, VPC endpoints |
+| `modules/ecs-cluster/` | ECS cluster with Container Insights, Service Connect namespace |
+| `modules/ec2-capacity/` | Launch template, ASG, capacity provider, instance security group |
+| `modules/dynamodb/` | DynamoDB tables for distributed rate limiting and connection leasing |
+| `modules/temporal-service/` | Generic module for History, Matching, Frontend, Worker services |
+| `modules/temporal-ui/` | Temporal UI service |
+| `modules/benchmark/` | Benchmark generator task, worker service, EC2 capacity |
+| `modules/observability/` | Loki, Grafana, Prometheus workspace |
+| `modules/opensearch/` | OpenSearch domain and security groups |
+| `modules/iam/` | Task execution role, task roles with least-privilege policies |
+| `modules/alloy-sidecar/` | Alloy sidecar container definitions for log collection |
+
+### Environment Configurations
+
+| Environment | Purpose |
+|-------------|---------|
+| `envs/dev/` | Development environment with minimal resources |
+| `envs/bench/` | Benchmark environment with high-throughput configuration |
+| `envs/prod/` | Production environment (template) |
 
 ### Scripts
 
@@ -458,20 +447,21 @@ Dedicated benchmark infrastructure with scale-from-zero capability:
 
 ### Adding a New Environment Variable
 
-1. Add variable to `variables.tf` with description and default
-2. Add to container `environment` block in relevant `temporal-*.tf`
-3. Update `terraform.tfvars.example` with example value
+1. Add variable to `modules/<module>/variables.tf` with description and default
+2. Add to container `environment` block in the module's `main.tf`
+3. Pass the variable from `envs/<env>/main.tf` to the module
+4. Update `envs/<env>/terraform.tfvars.example` with example value
 
 ### Modifying Security Group Rules
 
-1. Edit `security-groups.tf`
+1. Edit `modules/<module>/security-groups.tf`
 2. Add ingress/egress rules referencing specific security groups
 3. Never use `0.0.0.0/0` for ingress
 
 ### Scaling a Service
 
-1. Update `temporal_*_count` variable in `terraform.tfvars`
-2. Run `terraform apply`
+1. Update service count in `envs/<env>/terraform.tfvars`
+2. Run `terraform apply` from the environment directory
 3. Or use AWS CLI: `aws ecs update-service --desired-count N`
 
 ### Running a Benchmark
@@ -484,22 +474,23 @@ Dedicated benchmark infrastructure with scale-from-zero capability:
 
 1. Build new image: `./scripts/build-and-push-ecr.sh ../temporal-dsql`
 2. Force new deployment: `./scripts/cluster-management.sh force-deploy`
-3. Or update `temporal_image` in `terraform.tfvars` if using version tag and run `terraform apply`
+3. Or update `temporal_image` in `envs/<env>/terraform.tfvars` if using version tag and run `terraform apply`
 
 ## Testing
 
 ### Terraform Validation
 
 ```bash
-cd terraform
+cd terraform/envs/dev
 terraform init
 terraform validate
-terraform fmt -check
+terraform fmt -check -recursive ../../
 ```
 
 ### Plan Review
 
 ```bash
+cd terraform/envs/dev
 terraform plan -out=plan.tfplan
 terraform show -json plan.tfplan > plan.json
 # Review plan.json for correctness properties

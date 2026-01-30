@@ -4,7 +4,7 @@ package metrics
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -210,9 +210,9 @@ func (h *handler) StartServer(ctx context.Context, port int) error {
 	}
 
 	go func() {
-		log.Printf("Starting metrics server on port %d", port)
+		slog.Info("Starting metrics server", "port", port)
 		if err := h.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Metrics server error: %v", err)
+			slog.Error("Metrics server error", "error", err)
 		}
 	}()
 
@@ -225,7 +225,7 @@ func (h *handler) StopServer(ctx context.Context) error {
 		return nil
 	}
 
-	log.Println("Stopping metrics server")
+	slog.Info("Stopping metrics server")
 	return h.server.Shutdown(ctx)
 }
 

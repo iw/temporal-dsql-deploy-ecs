@@ -6,7 +6,7 @@ package cleanup
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -75,7 +75,7 @@ func (c *Cleaner) CleanupNamespace(ctx context.Context, namespace string) (*Clea
 		TerminationErrors: []TerminationError{},
 	}
 
-	log.Printf("Starting cleanup for namespace: %s", namespace)
+	slog.Info("Starting cleanup", "namespace", namespace)
 
 	// List all running workflows in the namespace
 	workflows, err := c.listOpenWorkflows(ctx, namespace)
@@ -87,10 +87,10 @@ func (c *Cleaner) CleanupNamespace(ctx context.Context, namespace string) (*Clea
 	}
 
 	result.WorkflowsFound = len(workflows)
-	log.Printf("Found %d running workflows to terminate", result.WorkflowsFound)
+	slog.Info("Found running workflows to terminate", "count", result.WorkflowsFound)
 
 	if result.WorkflowsFound == 0 {
-		log.Printf("No running workflows found in namespace %s", namespace)
+		slog.Info("No running workflows found", "namespace", namespace)
 		result.Success = true
 		result.Duration = time.Since(startTime)
 		return result, nil
@@ -168,7 +168,7 @@ func (c *Cleaner) terminateWorkflows(ctx context.Context, namespace string, work
 	for i, wf := range workflows {
 		// Log progress periodically
 		if (i+1)%progressInterval == 0 || i == 0 {
-			log.Printf("Cleanup progress: %d/%d workflows processed", i+1, len(workflows))
+			slog.Info("Cleanup progress", "processed", i+1, "total", len(workflows))
 		}
 
 		wg.Add(1)
@@ -235,51 +235,46 @@ func isRetryableError(err error) bool {
 
 // logCleanupSummary logs a summary of the cleanup operation.
 func (c *Cleaner) logCleanupSummary(result *CleanupResult) {
-	log.Printf("=== Cleanup Summary ===")
-	log.Printf("Namespace: %s", result.Namespace)
-	log.Printf("Workflows found: %d", result.WorkflowsFound)
-	log.Printf("Workflows terminated: %d", result.WorkflowsTerminated)
-	log.Printf("Termination errors: %d", len(result.TerminationErrors))
-	log.Printf("Duration: %v", result.Duration)
+	slog.Info("=== Cleanup Summary ===",
+		"namespace", result.Namespace,
+		"workflows_found", result.WorkflowsFound,
+		"workflows_terminated", result.WorkflowsTerminated,
+		"termination_errors", len(result.TerminationErrors),
+		"duration", result.Duration,
+		"success", result.Success)
 
-	if result.Success {
-		log.Printf("Status: SUCCESS")
-	} else {
-		log.Printf("Status: PARTIAL FAILURE")
+	if !result.Success {
 		// Log first few errors for debugging
 		maxErrorsToLog := 5
 		for i, termErr := range result.TerminationErrors {
 			if i >= maxErrorsToLog {
-				log.Printf("  ... and %d more errors", len(result.TerminationErrors)-maxErrorsToLog)
+				slog.Warn("Additional termination errors not shown",
+					"remaining", len(result.TerminationErrors)-maxErrorsToLog)
 				break
 			}
-			log.Printf("  - Failed to terminate %s: %v", termErr.WorkflowID, termErr.Error)
+			slog.Error("Failed to terminate workflow",
+				"workflow_id", termErr.WorkflowID,
+				"error", termErr.Error)
 		}
 	}
-	log.Printf("=======================")
 }
 
 // logManualCleanupInstructions logs instructions for manual cleanup.
 // Requirement 8.4: IF cleanup fails, THEN THE Benchmark_Runner SHALL log the failure
 // and provide manual cleanup instructions.
 func logManualCleanupInstructions(namespace string, err error) {
-	log.Printf("=== MANUAL CLEANUP REQUIRED ===")
-	log.Printf("Cleanup failed with error: %v", err)
-	log.Printf("")
-	log.Printf("To manually clean up workflows in namespace '%s', run one of the following:", namespace)
-	log.Printf("")
-	log.Printf("Using tctl:")
-	log.Printf("  tctl --namespace %s workflow terminate --query 'ExecutionStatus=\"Running\"'", namespace)
-	log.Printf("")
-	log.Printf("Using temporal CLI:")
-	log.Printf("  temporal workflow terminate --namespace %s --query 'ExecutionStatus=\"Running\"'", namespace)
-	log.Printf("")
-	log.Printf("To list running workflows first:")
-	log.Printf("  temporal workflow list --namespace %s --query 'ExecutionStatus=\"Running\"'", namespace)
-	log.Printf("")
-	log.Printf("To terminate a specific workflow:")
-	log.Printf("  temporal workflow terminate --namespace %s --workflow-id <WORKFLOW_ID>", namespace)
-	log.Printf("================================")
+	slog.Error("=== MANUAL CLEANUP REQUIRED ===",
+		"namespace", namespace,
+		"error", err)
+	slog.Info("To manually clean up workflows, run one of the following:")
+	slog.Info("Using tctl:",
+		"command", fmt.Sprintf("tctl --namespace %s workflow terminate --query 'ExecutionStatus=\"Running\"'", namespace))
+	slog.Info("Using temporal CLI:",
+		"command", fmt.Sprintf("temporal workflow terminate --namespace %s --query 'ExecutionStatus=\"Running\"'", namespace))
+	slog.Info("To list running workflows first:",
+		"command", fmt.Sprintf("temporal workflow list --namespace %s --query 'ExecutionStatus=\"Running\"'", namespace))
+	slog.Info("To terminate a specific workflow:",
+		"command", fmt.Sprintf("temporal workflow terminate --namespace %s --workflow-id <WORKFLOW_ID>", namespace))
 }
 
 // GetRunningWorkflowCount returns the count of running workflows in a namespace.
@@ -303,7 +298,7 @@ func (c *Cleaner) VerifyCleanup(ctx context.Context, namespace string) error {
 		return fmt.Errorf("cleanup incomplete: %d workflows still running in namespace %s", count, namespace)
 	}
 
-	log.Printf("Cleanup verified: no running workflows in namespace %s", namespace)
+	slog.Info("Cleanup verified: no running workflows", "namespace", namespace)
 	return nil
 }
 
@@ -359,7 +354,7 @@ func (c *Cleaner) CleanupWithRetry(ctx context.Context, namespace string, maxAtt
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
-			log.Printf("Cleanup retry attempt %d/%d for namespace %s", attempt, maxAttempts, namespace)
+			slog.Info("Cleanup retry attempt", "attempt", attempt, "max_attempts", maxAttempts, "namespace", namespace)
 			// Wait before retry
 			select {
 			case <-ctx.Done():
@@ -378,8 +373,9 @@ func (c *Cleaner) CleanupWithRetry(ctx context.Context, namespace string, maxAtt
 
 		// If we got partial success, continue to next attempt
 		if result != nil && result.WorkflowsTerminated > 0 {
-			log.Printf("Partial cleanup success: %d/%d workflows terminated, retrying remaining...",
-				result.WorkflowsTerminated, result.WorkflowsFound)
+			slog.Info("Partial cleanup success, retrying remaining",
+				"terminated", result.WorkflowsTerminated,
+				"found", result.WorkflowsFound)
 		}
 	}
 
@@ -396,7 +392,7 @@ func (c *Cleaner) CleanupWithRetry(ctx context.Context, namespace string, maxAtt
 
 		// Generate and log cleanup script
 		script := GenerateCleanupScript(namespace, lastResult.TerminationErrors)
-		log.Printf("\n=== CLEANUP SCRIPT ===\n%s\n======================\n", script)
+		slog.Info("=== CLEANUP SCRIPT ===\n" + script + "\n======================")
 
 		return lastResult, cleanupErr
 	}

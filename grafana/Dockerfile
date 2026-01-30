@@ -3,6 +3,11 @@
 #
 # Build: docker build -t temporal-grafana:latest grafana/
 # 
+# Datasources provisioned:
+#   - Prometheus (AMP) - Metrics from Amazon Managed Prometheus
+#   - CloudWatch - AWS service metrics
+#   - Loki - Log aggregation via Service Connect (http://loki:3100)
+#
 # Environment variables (set in ECS task definition):
 #   AMP_ENDPOINT - Amazon Managed Prometheus query endpoint
 #   AWS_REGION - AWS region for SigV4 auth and CloudWatch

@@ -4,18 +4,19 @@ set -eo pipefail
 # Scale Temporal ECS services up or down
 #
 # Usage:
-#   ./scripts/scale-services.sh [up|down] [OPTIONS]
+#   ./scripts/scale-services.sh <environment> [up|down] [OPTIONS]
+#
+# Arguments:
+#   environment        Environment to operate on (dev, bench, prod)
 #
 # Commands:
 #   up      Scale services to specified WPS configuration
 #   down    Scale all services to 0 replicas
 #
 # Options:
-#   --region REGION        AWS region (default: eu-west-1 or from terraform.tfvars)
-#   --cluster CLUSTER      ECS cluster name (default: from terraform.tfvars project_name)
+#   --region REGION        AWS region (default: from terraform output)
 #   --wps WPS              Target workflows per second (50, 100, 200, 400)
 #   --apply                Update terraform.tfvars and run terraform apply (requires --wps)
-#   --from-terraform       Read cluster name and region from terraform.tfvars
 #   -h, --help             Show this help message
 #
 # WPS Presets:
@@ -25,9 +26,14 @@ set -eo pipefail
 #   --wps 400  history=16, matching=16, frontend=9, worker=3
 #
 # Examples:
-#   ./scripts/scale-services.sh up --from-terraform --wps 100           # Scale for 100 WPS
-#   ./scripts/scale-services.sh up --from-terraform --wps 200 --apply   # Full setup with terraform
-#   ./scripts/scale-services.sh down --from-terraform                   # Scale to 0
+#   ./scripts/scale-services.sh dev up --wps 100           # Scale dev for 100 WPS
+#   ./scripts/scale-services.sh bench up --wps 200 --apply # Full setup with terraform
+#   ./scripts/scale-services.sh prod down                  # Scale prod to 0
+#
+# Available Environments:
+#   dev    Development environment (minimal resources)
+#   bench  Benchmark environment (includes benchmark module)
+#   prod   Production environment (production-grade resources)
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -39,14 +45,61 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Available environments
+AVAILABLE_ENVS=("dev" "bench" "prod")
+
 # Default values
+ENVIRONMENT=""
 COMMAND=""
-AWS_REGION="${AWS_REGION:-eu-west-1}"
+AWS_REGION=""
 CLUSTER_NAME=""
 PROJECT_NAME=""
 TARGET_WPS=""
-FROM_TERRAFORM=false
 APPLY_TERRAFORM=false
+
+# Function to show usage
+show_usage() {
+    head -36 "$0" | tail -34
+    exit 0
+}
+
+# Function to validate environment
+validate_environment() {
+    local env="$1"
+    local env_dir="terraform/envs/$env"
+    
+    # Check if environment is in the list of available environments
+    local valid=false
+    for available_env in "${AVAILABLE_ENVS[@]}"; do
+        if [ "$env" = "$available_env" ]; then
+            valid=true
+            break
+        fi
+    done
+    
+    if [ "$valid" = false ]; then
+        echo -e "${RED}Error: Invalid environment '$env'${NC}"
+        echo ""
+        echo "Available environments: ${AVAILABLE_ENVS[*]}"
+        exit 1
+    fi
+    
+    # Check if environment directory exists
+    if [ ! -d "$env_dir" ]; then
+        echo -e "${RED}Error: Environment directory not found: $env_dir${NC}"
+        echo ""
+        echo "Available environments: ${AVAILABLE_ENVS[*]}"
+        echo ""
+        echo "Please ensure the environment has been created in terraform/envs/"
+        exit 1
+    fi
+    
+    # Check if terraform has been initialized
+    if [ ! -d "$env_dir/.terraform" ]; then
+        echo -e "${YELLOW}Warning: Terraform not initialized for environment '$env'${NC}"
+        echo "Run: cd $env_dir && terraform init"
+    fi
+}
 
 # Function to get replica count based on target WPS
 get_wps_count() {
@@ -171,11 +224,12 @@ get_wps_memory() {
 # Function to update terraform.tfvars with WPS-based resources
 update_tfvars_for_wps() {
     local wps="$1"
-    local tfvars_file="terraform/terraform.tfvars"
+    local env_dir="$2"
+    local tfvars_file="$env_dir/terraform.tfvars"
     
     if [ ! -f "$tfvars_file" ]; then
-        echo -e "${RED}Error: $tfvars_file not found${NC}"
-        return 1
+        echo -e "${YELLOW}Warning: $tfvars_file not found, skipping tfvars update${NC}"
+        return 0
     fi
     
     echo -e "${BLUE}Updating $tfvars_file for $wps WPS...${NC}"
@@ -210,19 +264,53 @@ update_tfvars_for_wps() {
     echo "  Worker:   CPU=$worker_cpu, Memory=$worker_mem"
 }
 
+# Function to get terraform outputs for an environment
+get_terraform_outputs() {
+    local env_dir="$1"
+    
+    echo -e "${BLUE}Reading configuration from Terraform ($ENVIRONMENT environment)...${NC}"
+    
+    cd "$PROJECT_ROOT/$env_dir"
+    
+    # Get cluster name from terraform output
+    CLUSTER_NAME=$(terraform output -raw ecs_cluster_name 2>/dev/null) || {
+        echo -e "${RED}Error: Could not get cluster name from terraform output${NC}"
+        echo "Make sure terraform has been applied for the $ENVIRONMENT environment"
+        exit 1
+    }
+    
+    # Get region from terraform output
+    AWS_REGION=$(terraform output -raw region 2>/dev/null) || {
+        # Fallback: use default
+        AWS_REGION="eu-west-1"
+    }
+    
+    # Extract project name from cluster name (remove -cluster suffix)
+    PROJECT_NAME="${CLUSTER_NAME%-cluster}"
+    
+    cd "$PROJECT_ROOT"
+    
+    echo -e "${GREEN}✓ Environment: $ENVIRONMENT${NC}"
+    echo -e "${GREEN}✓ Project: $PROJECT_NAME${NC}"
+    echo -e "${GREEN}✓ Cluster: $CLUSTER_NAME${NC}"
+    echo -e "${GREEN}✓ Region: $AWS_REGION${NC}"
+}
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        dev|bench|prod)
+            if [ -z "$ENVIRONMENT" ]; then
+                ENVIRONMENT="$1"
+            fi
+            shift
+            ;;
         up|down)
             COMMAND="$1"
             shift
             ;;
         --region)
             AWS_REGION="$2"
-            shift 2
-            ;;
-        --cluster)
-            CLUSTER_NAME="$2"
             shift 2
             ;;
         --wps)
@@ -233,31 +321,56 @@ while [[ $# -gt 0 ]]; do
             APPLY_TERRAFORM=true
             shift
             ;;
-        --from-terraform)
-            FROM_TERRAFORM=true
-            shift
-            ;;
         -h|--help)
-            head -28 "$0" | tail -26
-            exit 0
+            show_usage
             ;;
         *)
-            echo -e "${RED}Unknown option: $1${NC}"
-            exit 1
+            # Check if this looks like an environment name (first positional arg)
+            if [ -z "$ENVIRONMENT" ] && [[ ! "$1" =~ ^-- ]]; then
+                echo -e "${RED}Error: Invalid environment '$1'${NC}"
+                echo ""
+                echo "Available environments: ${AVAILABLE_ENVS[*]}"
+                exit 1
+            else
+                echo -e "${RED}Unknown option: $1${NC}"
+                echo ""
+                echo "Usage: $0 <environment> [up|down] [OPTIONS]"
+                echo ""
+                echo "Available environments: ${AVAILABLE_ENVS[*]}"
+                exit 1
+            fi
             ;;
     esac
 done
+
+# Validate environment is provided
+if [ -z "$ENVIRONMENT" ]; then
+    echo -e "${RED}Error: Environment is required${NC}"
+    echo ""
+    echo "Usage: $0 <environment> [up|down] [OPTIONS]"
+    echo ""
+    echo "Available environments: ${AVAILABLE_ENVS[*]}"
+    echo ""
+    echo "Examples:"
+    echo "  $0 dev up --wps 100           # Scale dev for 100 WPS"
+    echo "  $0 bench up --wps 200 --apply # Full setup with terraform"
+    echo "  $0 prod down                  # Scale prod to 0"
+    exit 1
+fi
+
+# Validate environment
+validate_environment "$ENVIRONMENT"
 
 # Validate command
 if [ -z "$COMMAND" ]; then
     echo -e "${RED}Error: Missing command (up or down)${NC}"
     echo ""
-    echo "Usage: $0 [up|down] [OPTIONS]"
+    echo "Usage: $0 <environment> [up|down] [OPTIONS]"
     echo ""
     echo "Examples:"
-    echo "  $0 up --from-terraform --wps 100           # Scale for 100 WPS"
-    echo "  $0 up --from-terraform --wps 200 --apply   # Full setup with terraform"
-    echo "  $0 down --from-terraform                   # Scale all to 0"
+    echo "  $0 $ENVIRONMENT up --wps 100           # Scale for 100 WPS"
+    echo "  $0 $ENVIRONMENT up --wps 200 --apply   # Full setup with terraform"
+    echo "  $0 $ENVIRONMENT down                   # Scale all to 0"
     exit 1
 fi
 
@@ -274,41 +387,16 @@ if [ "$APPLY_TERRAFORM" = true ] && [ -z "$TARGET_WPS" ]; then
     exit 1
 fi
 
-# Read from Terraform if requested
-if [ "$FROM_TERRAFORM" = true ]; then
-    echo -e "${BLUE}Reading configuration from Terraform...${NC}"
-    
-    if [ ! -d "terraform" ]; then
-        echo -e "${RED}Error: terraform directory not found${NC}"
-        exit 1
-    fi
-    
-    if [ -f "terraform/terraform.tfvars" ]; then
-        PROJECT_NAME=$(grep -E "^project_name" terraform/terraform.tfvars | cut -d'"' -f2 || echo "temporal-dev")
-        TFVARS_REGION=$(grep -E "^region" terraform/terraform.tfvars | cut -d'"' -f2 || true)
-        if [ -n "$TFVARS_REGION" ]; then
-            AWS_REGION="$TFVARS_REGION"
-        fi
-    else
-        PROJECT_NAME="temporal-dev"
-    fi
-    
-    CLUSTER_NAME="${PROJECT_NAME}-cluster"
-    echo -e "${GREEN}✓ Project: $PROJECT_NAME${NC}"
-    echo -e "${GREEN}✓ Cluster: $CLUSTER_NAME${NC}"
-    echo -e "${GREEN}✓ Region: $AWS_REGION${NC}"
-fi
+# Set environment directory
+ENV_DIR="terraform/envs/$ENVIRONMENT"
 
-# Validate cluster name
-if [ -z "$CLUSTER_NAME" ]; then
-    echo -e "${RED}Error: Cluster name not specified${NC}"
-    echo "Use --cluster or --from-terraform"
-    exit 1
-fi
+# Get terraform outputs
+get_terraform_outputs "$ENV_DIR"
 
-# Determine project name from cluster name if not set
-if [ -z "$PROJECT_NAME" ]; then
-    PROJECT_NAME="${CLUSTER_NAME%-cluster}"
+# Override region if provided via command line
+if [ -n "$2" ] && [ "$2" != "$AWS_REGION" ]; then
+    # Region was explicitly set via --region, keep it
+    :
 fi
 
 # Function to get short name from full service name
@@ -337,6 +425,7 @@ SERVICES=(
 
 echo ""
 echo "=== Scaling ECS Services ==="
+echo "Environment: $ENVIRONMENT"
 echo "Cluster: $CLUSTER_NAME"
 echo "Region: $AWS_REGION"
 echo "Command: $COMMAND"
@@ -352,11 +441,11 @@ echo ""
 # If --apply is set, update tfvars and run terraform apply
 if [ "$APPLY_TERRAFORM" = true ] && [ -n "$TARGET_WPS" ]; then
     echo "=== Updating Terraform Configuration ==="
-    update_tfvars_for_wps "$TARGET_WPS"
+    update_tfvars_for_wps "$TARGET_WPS" "$ENV_DIR"
     echo ""
     
     echo "=== Running Terraform Apply ==="
-    cd terraform
+    cd "$PROJECT_ROOT/$ENV_DIR"
     terraform apply -auto-approve
     cd "$PROJECT_ROOT"
     echo ""

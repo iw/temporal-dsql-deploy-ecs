@@ -3,9 +3,10 @@ set -eu
 
 # Render Temporal config template and start the server
 # This script:
-# 1. Resolves network binding addresses (with ECS metadata support)
-# 2. Renders the persistence config template using environment variables
-# 3. Starts temporal-server with the rendered config
+# 1. Selects environment-specific dynamic config (dev, bench, prod)
+# 2. Resolves network binding addresses (with ECS metadata support)
+# 3. Renders the persistence config template using environment variables
+# 4. Starts temporal-server with the rendered config
 
 TEMPLATE_PATH="${TEMPORAL_PERSISTENCE_TEMPLATE:-/etc/temporal/config/persistence-dsql-opensearch.template.yaml}"
 OUTPUT_PATH="${TEMPORAL_PERSISTENCE_CONFIG:-/etc/temporal/config/persistence-dsql.yaml}"
@@ -13,6 +14,21 @@ OUTPUT_PATH="${TEMPORAL_PERSISTENCE_CONFIG:-/etc/temporal/config/persistence-dsq
 echo "=== Temporal DSQL Runtime Startup ==="
 echo "Template: $TEMPLATE_PATH"
 echo "Output: $OUTPUT_PATH"
+
+# Select environment-specific dynamic config
+# Note: Use DEPLOY_ENVIRONMENT instead of TEMPORAL_ENVIRONMENT to avoid conflict
+# with temporal-server CLI which interprets TEMPORAL_ENVIRONMENT as --env flag
+DEPLOY_ENVIRONMENT="${DEPLOY_ENVIRONMENT:-prod}"
+DYNAMIC_CONFIG_PATH="/etc/temporal/config/dynamicconfig/${DEPLOY_ENVIRONMENT}.yaml"
+DYNAMIC_CONFIG_LINK="/etc/temporal/config/dynamicconfig/dynamicconfig.yaml"
+
+if [ -f "$DYNAMIC_CONFIG_PATH" ]; then
+    echo "Using dynamic config for environment: $DEPLOY_ENVIRONMENT"
+    ln -sf "$DYNAMIC_CONFIG_PATH" "$DYNAMIC_CONFIG_LINK"
+else
+    echo "WARNING: Dynamic config not found for environment '$DEPLOY_ENVIRONMENT', using default (prod)"
+    ln -sf "/etc/temporal/config/dynamicconfig/prod.yaml" "$DYNAMIC_CONFIG_LINK"
+fi
 
 # Determine the broadcast address for cluster membership
 # In ECS with awsvpc mode, we need to get the task's private IP from the metadata endpoint
@@ -118,6 +134,18 @@ if [ -z "$SERVICE" ]; then
 fi
 
 echo "Starting Temporal $SERVICE service..."
+
+# Unset environment variables that conflict with --config-file
+# These are interpreted as deprecated CLI flags by temporal-server:
+# - TEMPORAL_ENVIRONMENT -> --env (conflicts with --config-file)
+# - TEMPORAL_ROOT -> --root (conflicts with --config-file)
+# - TEMPORAL_CONFIG_DIR -> --config (conflicts with --config-file)
+# - TEMPORAL_AVAILABILITY_ZONE -> --zone (conflicts with --config-file)
+unset TEMPORAL_ENVIRONMENT
+unset TEMPORAL_ROOT
+unset TEMPORAL_CONFIG_DIR
+unset TEMPORAL_AVAILABILITY_ZONE
+unset TEMPORAL_AVAILABILTY_ZONE
 
 # Start temporal-server with the rendered config
 exec temporal-server \

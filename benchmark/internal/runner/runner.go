@@ -4,7 +4,7 @@ package runner
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -123,7 +123,7 @@ func (r *runner) Run(ctx context.Context, cfg config.BenchmarkConfig) (*Benchmar
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := r.metricsHandler.StopServer(shutdownCtx); err != nil {
-			log.Printf("Warning: failed to stop metrics server: %v", err)
+			slog.Warn("Failed to stop metrics server", "error", err)
 		}
 	}()
 
@@ -131,7 +131,7 @@ func (r *runner) Run(ctx context.Context, cfg config.BenchmarkConfig) (*Benchmar
 	var aggregatedResult *BenchmarkResult
 	for i := 0; i < cfg.Iterations; i++ {
 		if cfg.Iterations > 1 {
-			log.Printf("Starting iteration %d of %d", i+1, cfg.Iterations)
+			slog.Info("Starting iteration", "iteration", i+1, "total", cfg.Iterations)
 		}
 
 		result, err := r.runSingleIteration(ctx, cfg, namespace)
@@ -148,7 +148,7 @@ func (r *runner) Run(ctx context.Context, cfg config.BenchmarkConfig) (*Benchmar
 		// Check for cancellation between iterations
 		select {
 		case <-ctx.Done():
-			log.Println("Benchmark cancelled between iterations")
+			slog.Info("Benchmark cancelled between iterations")
 			return aggregatedResult, ctx.Err()
 		default:
 		}
@@ -159,9 +159,9 @@ func (r *runner) Run(ctx context.Context, cfg config.BenchmarkConfig) (*Benchmar
 	results.EvaluateThresholdsWithConfig(aggregatedResult, cfg)
 
 	if aggregatedResult.Passed {
-		log.Println("Benchmark PASSED all thresholds")
+		slog.Info("Benchmark PASSED all thresholds")
 	} else {
-		log.Printf("Benchmark FAILED: %v", aggregatedResult.FailureReasons)
+		slog.Warn("Benchmark FAILED", "failure_reasons", aggregatedResult.FailureReasons)
 	}
 
 	return aggregatedResult, nil
@@ -233,9 +233,9 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 			return nil, fmt.Errorf("failed to start worker: %w", err)
 		}
 		defer w.Stop()
-		log.Println("Embedded worker started")
+		slog.Info("Embedded worker started")
 	} else {
-		log.Println("Generator-only mode: no embedded worker (workflows processed by external workers)")
+		slog.Info("Generator-only mode: no embedded worker (workflows processed by external workers)")
 	}
 
 	// Create workflow generator with completion callback using namespace client
@@ -257,14 +257,14 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 	// Wait for test duration
 	select {
 	case <-ctx.Done():
-		log.Println("Benchmark cancelled during execution")
+		slog.Info("Benchmark cancelled during execution")
 	case <-time.After(cfg.Duration):
-		log.Println("Benchmark duration completed")
+		slog.Info("Benchmark duration completed")
 	}
 
 	// Stop generator
 	if err := gen.Stop(); err != nil {
-		log.Printf("Warning: failed to stop generator: %v", err)
+		slog.Warn("Failed to stop generator", "error", err)
 	}
 
 	// Wait for remaining workflows to complete (with timeout)
@@ -278,12 +278,14 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 		completionTimeout = max(60*time.Second, cfg.Duration)
 		// Cap at 10 minutes to avoid indefinite waits
 		completionTimeout = min(completionTimeout, 10*time.Minute)
-		log.Printf("Auto-calculated completion timeout: %v (expected ~%.0f workflows)", completionTimeout, expectedWorkflows)
+		slog.Info("Auto-calculated completion timeout",
+			"timeout", completionTimeout,
+			"expected_workflows", expectedWorkflows)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, completionTimeout)
 	defer cancel()
 	if err := gen.Wait(waitCtx); err != nil {
-		log.Printf("Warning: some workflows may not have completed: %v", err)
+		slog.Warn("Some workflows may not have completed", "error", err)
 	}
 
 	endTime := time.Now()
@@ -315,7 +317,7 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 // Requirement 5.6: IF the Temporal cluster is unhealthy, THEN THE Benchmark_Runner SHALL fail fast
 // with a clear error message.
 func (r *runner) checkClusterHealth(ctx context.Context) error {
-	log.Println("Checking Temporal cluster health...")
+	slog.Info("Checking Temporal cluster health...")
 
 	// Use CheckHealth API to verify cluster is responsive
 	_, err := r.client.CheckHealth(ctx, nil)
@@ -323,7 +325,7 @@ func (r *runner) checkClusterHealth(ctx context.Context) error {
 		return fmt.Errorf("Temporal cluster is unhealthy: %w", err)
 	}
 
-	log.Println("Temporal cluster health check passed")
+	slog.Info("Temporal cluster health check passed")
 	return nil
 }
 
@@ -331,7 +333,7 @@ func (r *runner) checkClusterHealth(ctx context.Context) error {
 // Requirement 5.3: WHEN a benchmark starts, THE Benchmark_Runner SHALL create a dedicated namespace
 // Requirement 8.1: THE Benchmark_Runner SHALL use a dedicated namespace prefixed with "benchmark-"
 func (r *runner) ensureNamespace(ctx context.Context, namespace string) error {
-	log.Printf("Ensuring namespace %s exists...", namespace)
+	slog.Info("Ensuring namespace exists", "namespace", namespace)
 
 	namespaceCreated := false
 
@@ -340,10 +342,10 @@ func (r *runner) ensureNamespace(ctx context.Context, namespace string) error {
 		Namespace: namespace,
 	})
 	if err == nil {
-		log.Printf("Namespace %s already exists", namespace)
+		slog.Info("Namespace already exists", "namespace", namespace)
 	} else {
 		// Create the namespace
-		log.Printf("Creating namespace %s...", namespace)
+		slog.Info("Creating namespace", "namespace", namespace)
 		_, err = r.client.WorkflowService().RegisterNamespace(ctx, &workflowservice.RegisterNamespaceRequest{
 			Namespace:                        namespace,
 			Description:                      "Benchmark namespace for Temporal DSQL performance testing",
@@ -356,13 +358,13 @@ func (r *runner) ensureNamespace(ctx context.Context, namespace string) error {
 		namespaceCreated = true
 
 		// Wait for namespace to be registered
-		log.Printf("Waiting for namespace %s to be registered...", namespace)
+		slog.Info("Waiting for namespace to be registered", "namespace", namespace)
 		for i := 0; i < 30; i++ {
 			_, err := r.client.WorkflowService().DescribeNamespace(ctx, &workflowservice.DescribeNamespaceRequest{
 				Namespace: namespace,
 			})
 			if err == nil {
-				log.Printf("Namespace %s is registered", namespace)
+				slog.Info("Namespace is registered", "namespace", namespace)
 				break
 			}
 			if i == 29 {
@@ -380,7 +382,7 @@ func (r *runner) ensureNamespace(ctx context.Context, namespace string) error {
 	// This is critical because namespace registration on frontend doesn't mean
 	// history and matching services are ready to handle workflows in that namespace
 	if namespaceCreated {
-		log.Printf("Waiting for namespace %s to propagate to all services...", namespace)
+		slog.Info("Waiting for namespace to propagate to all services", "namespace", namespace)
 		// Wait 10 seconds for namespace to propagate across all Temporal services
 		// This is necessary because namespace changes need to sync to history/matching
 		select {
@@ -388,7 +390,7 @@ func (r *runner) ensureNamespace(ctx context.Context, namespace string) error {
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
 		}
-		log.Printf("Namespace %s propagation wait complete", namespace)
+		slog.Info("Namespace propagation wait complete", "namespace", namespace)
 	}
 
 	return nil
@@ -403,7 +405,7 @@ func generateNamespace() string {
 // Requirement 8.2: WHEN a benchmark completes, THE Benchmark_Runner SHALL terminate all running workflows
 // Requirement 8.4: IF cleanup fails, THEN THE Benchmark_Runner SHALL log the failure and provide manual cleanup instructions
 func (r *runner) Cleanup(ctx context.Context, namespace string) error {
-	log.Printf("Starting cleanup for namespace: %s", namespace)
+	slog.Info("Starting cleanup", "namespace", namespace)
 
 	// Use the dedicated cleaner for comprehensive cleanup
 	result, err := r.cleaner.CleanupNamespace(ctx, namespace)
@@ -419,7 +421,7 @@ func (r *runner) Cleanup(ctx context.Context, namespace string) error {
 
 	// Verify no workflows remain
 	if err := r.cleaner.VerifyCleanup(ctx, namespace); err != nil {
-		log.Printf("Warning: cleanup verification failed: %v", err)
+		slog.Warn("Cleanup verification failed", "error", err)
 		// Don't return error here as workflows may have been terminated but verification timing issue
 	}
 

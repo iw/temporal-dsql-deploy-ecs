@@ -1,0 +1,188 @@
+# -----------------------------------------------------------------------------
+# Dev Environment Configuration
+# -----------------------------------------------------------------------------
+# Copy this file to terraform.tfvars and update the DSQL and image values.
+# This configuration is representative of a minimal dev environment (WPS 50).
+#
+# Resource Summary (4x m8g.xlarge = 16 vCPU, 64 GB RAM, 16 ENIs):
+#   - Temporal Services: 11 tasks, ~6.5 vCPU, ~14 GB RAM
+#   - Observability: 2 tasks, ~0.75 vCPU, ~1.5 GB RAM
+#   - Headroom: ~9 vCPU, ~48 GB RAM for scaling
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Aurora DSQL Configuration (REQUIRED - update these values)
+# -----------------------------------------------------------------------------
+
+# Aurora DSQL cluster endpoint (created externally)
+# Format: cluster-id.dsql.region.on.aws
+dsql_cluster_endpoint = "your-cluster-id.dsql.eu-west-1.on.aws"
+
+# Aurora DSQL cluster ARN for IAM policy configuration
+# Format: arn:aws:dsql:region:account:cluster/cluster-id
+dsql_cluster_arn = "arn:aws:dsql:eu-west-1:123456789012:cluster/your-cluster-id"
+
+# -----------------------------------------------------------------------------
+# Temporal Image Configuration (REQUIRED - update these values)
+# -----------------------------------------------------------------------------
+
+# Custom Temporal runtime Docker image URI (must be ARM64 compatible)
+# Built by: ./scripts/build-and-push-ecr.sh
+temporal_image = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-dsql-runtime:latest"
+
+# Custom Temporal admin-tools Docker image URI (must be ARM64 compatible)
+# Built by: ./scripts/build-and-push-ecr.sh
+temporal_admin_tools_image = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-dsql-admin-tools:latest"
+
+# -----------------------------------------------------------------------------
+# General Configuration
+# -----------------------------------------------------------------------------
+
+project_name = "temporal-dev"
+region       = "eu-west-1"
+
+# -----------------------------------------------------------------------------
+# VPC Configuration
+# -----------------------------------------------------------------------------
+
+vpc_cidr             = "10.0.0.0/16"
+availability_zones   = ["eu-west-1a", "eu-west-1b"]
+enable_vpc_endpoints = true
+
+# -----------------------------------------------------------------------------
+# EC2 Instance Configuration
+# -----------------------------------------------------------------------------
+# m8g.xlarge: 4 vCPU (4096 CPU units), 16 GB RAM, 4 ENIs per instance
+# With 4 instances: 16 vCPU, 64 GB RAM, 16 ENIs total
+# Supports WPS 50 configuration (11 Temporal tasks + 2 observability tasks)
+
+ec2_instance_type  = "m8g.xlarge"
+ec2_instance_count = 4
+
+# -----------------------------------------------------------------------------
+# Temporal History Service Configuration (WPS 50)
+# -----------------------------------------------------------------------------
+# 3 replicas × 1024 CPU × 4096 MB = 3072 CPU units, 12288 MB RAM
+
+temporal_history_cpu    = 1024
+temporal_history_memory = 4096
+temporal_history_count  = 3
+temporal_history_shards = 2048
+
+# -----------------------------------------------------------------------------
+# Temporal Matching Service Configuration (WPS 50)
+# -----------------------------------------------------------------------------
+# 2 replicas × 1024 CPU × 2048 MB = 2048 CPU units, 4096 MB RAM
+
+temporal_matching_cpu    = 1024
+temporal_matching_memory = 2048
+temporal_matching_count  = 2
+
+# -----------------------------------------------------------------------------
+# Temporal Frontend Service Configuration (WPS 50)
+# -----------------------------------------------------------------------------
+# 2 replicas × 512 CPU × 2048 MB = 1024 CPU units, 4096 MB RAM
+
+temporal_frontend_cpu    = 512
+temporal_frontend_memory = 2048
+temporal_frontend_count  = 2
+
+# -----------------------------------------------------------------------------
+# Temporal Worker Service Configuration (WPS 50)
+# -----------------------------------------------------------------------------
+# 2 replicas × 512 CPU × 1024 MB = 1024 CPU units, 2048 MB RAM
+
+temporal_worker_cpu    = 512
+temporal_worker_memory = 1024
+temporal_worker_count  = 2
+
+# -----------------------------------------------------------------------------
+# Temporal UI Service Configuration
+# -----------------------------------------------------------------------------
+# 1 replica × 256 CPU × 512 MB = 256 CPU units, 512 MB RAM
+
+temporal_ui_image  = "temporalio/ui:latest"
+temporal_ui_cpu    = 256
+temporal_ui_memory = 512
+temporal_ui_count  = 1
+
+# -----------------------------------------------------------------------------
+# OpenSearch Configuration
+# -----------------------------------------------------------------------------
+
+opensearch_visibility_index = "temporal_visibility_v1_dev"
+opensearch_instance_type    = "m6g.large.search"
+opensearch_instance_count   = 2
+
+# -----------------------------------------------------------------------------
+# Observability Configuration
+# -----------------------------------------------------------------------------
+# Loki: 1 replica × 512 CPU × 1024 MB = 512 CPU units, 1024 MB RAM
+# Grafana: 1 replica × 256 CPU × 512 MB = 256 CPU units, 512 MB RAM
+
+loki_enabled        = true
+loki_image          = "grafana/loki:3.6.4"
+loki_cpu            = 512
+loki_memory         = 1024
+loki_retention_days = 7
+alloy_image         = "grafana/alloy:v1.12.2"
+
+# -----------------------------------------------------------------------------
+# Grafana Configuration
+# -----------------------------------------------------------------------------
+# Create the secret before deploying:
+#   aws secretsmanager create-secret \
+#     --name grafana/admin \
+#     --secret-string '{"admin_user":"admin","admin_password":"your-password"}'
+#
+# Build and push custom Grafana image with Loki datasource and dashboards:
+#   ./scripts/build-grafana.sh
+
+grafana_admin_secret_name = "grafana/admin"
+grafana_image             = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-grafana:latest"
+grafana_cpu               = 256
+grafana_memory            = 512
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+
+log_retention_days = 7
+
+# -----------------------------------------------------------------------------
+# DSQL Connection Reservoir Configuration
+# -----------------------------------------------------------------------------
+# Pre-creates connections to avoid rate limit pressure under load.
+
+dsql_reservoir_enabled         = true
+dsql_reservoir_target_ready    = 50
+dsql_reservoir_base_lifetime   = "11m"
+dsql_reservoir_lifetime_jitter = "2m"
+dsql_reservoir_guard_window    = "45s"
+
+# -----------------------------------------------------------------------------
+# Distributed Connection Leasing Configuration
+# -----------------------------------------------------------------------------
+# Coordinates global connection count across all service instances.
+
+dsql_distributed_conn_lease_enabled = true
+
+# -----------------------------------------------------------------------------
+# Benchmark Configuration (scaled for dev)
+# -----------------------------------------------------------------------------
+# Benchmark infrastructure is enabled for testing at lower WPS targets.
+# Scale benchmark workers separately using ./scripts/scale-benchmark-workers.sh
+
+benchmark_enabled       = true
+benchmark_image         = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-benchmark:latest"
+benchmark_cpu           = 2048
+benchmark_memory        = 4096
+benchmark_max_instances = 2
+
+# -----------------------------------------------------------------------------
+# Benchmark Scaling Recommendations (Dev)
+# -----------------------------------------------------------------------------
+# | Target WPS | Workers | EC2 Instances | Notes           |
+# |------------|---------|---------------|-----------------|
+# | 25         | 8       | 1             | Light testing   |
+# | 50         | 16      | 2             | Dev max         |

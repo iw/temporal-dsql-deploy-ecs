@@ -82,7 +82,7 @@ Benchmark Cluster (13 instances, 208 vCPU):
 ## Prerequisites
 
 - AWS CLI v2 configured with appropriate permissions
-- Terraform >= 1.5
+- Terraform >= 1.14.0
 - Docker with buildx support (for ARM64 builds)
 - awscurl (for querying Amazon Managed Prometheus)
 - Aurora DSQL cluster (created separately)
@@ -212,14 +212,14 @@ aws dsql get-cluster --identifier <cluster-id> --region eu-west-1 --query 'statu
 Setup the Temporal schema in Aurora DSQL (requires the cluster to be ACTIVE):
 
 ```bash
-# Using the endpoint from step 4
+# Using environment (reads endpoint from Terraform outputs)
+./scripts/setup-schema.sh dev
+
+# Or specify endpoint directly
 ./scripts/setup-schema.sh --endpoint xxxxx.dsql.eu-west-1.on.aws
 
 # With custom options
-./scripts/setup-schema.sh \
-  --endpoint xxxxx.dsql.eu-west-1.on.aws \
-  --region eu-west-1 \
-  --temporal-dsql /path/to/temporal-dsql
+./scripts/setup-schema.sh dev --overwrite
 
 # To reset schema (drop and recreate)
 ./scripts/setup-schema.sh --endpoint xxxxx.dsql.eu-west-1.on.aws --overwrite
@@ -228,11 +228,14 @@ Setup the Temporal schema in Aurora DSQL (requires the cluster to be ACTIVE):
 ### 6. Configure Terraform Variables
 
 ```bash
+# Navigate to your environment directory
+cd terraform/envs/dev  # or bench, prod
+
 # Copy example configuration
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+cp terraform.tfvars.example terraform.tfvars
 
 # Edit with your values
-vim terraform/terraform.tfvars
+vim terraform.tfvars
 ```
 
 Required variables:
@@ -245,7 +248,7 @@ Required variables:
 ### 7. Deploy Infrastructure
 
 ```bash
-cd terraform
+cd terraform/envs/dev  # or bench, prod
 
 # Initialize Terraform
 terraform init
@@ -264,7 +267,7 @@ After deployment, run the one-time OpenSearch schema setup. This task runs on Fa
 
 ```bash
 # Run the OpenSearch setup task (runs on Fargate inside VPC)
-cd terraform
+cd terraform/envs/dev
 terraform output -raw opensearch_setup_command | bash
 
 # Monitor the setup task logs
@@ -276,6 +279,7 @@ Alternative: If you have network access to OpenSearch (e.g., via VPN or Direct C
 ```bash
 # Requires: pip install awscurl
 # Set the OpenSearch endpoint
+cd terraform/envs/dev
 export TEMPORAL_OPENSEARCH_HOST=$(terraform output -raw opensearch_endpoint)
 ./scripts/setup-opensearch.sh
 ```
@@ -285,7 +289,7 @@ export TEMPORAL_OPENSEARCH_HOST=$(terraform output -raw opensearch_endpoint)
 Wait for the 6 EC2 instances to register with the ECS cluster:
 
 ```bash
-./scripts/cluster-management.sh wait-ec2
+./scripts/cluster-management.sh dev wait-ec2
 ```
 
 This waits for all 6 instances to be registered before proceeding.
@@ -295,14 +299,14 @@ This waits for all 6 instances to be registered before proceeding.
 After schema setup is complete, scale up the Temporal services:
 
 ```bash
-# Scale all services to 1 replica
-./scripts/scale-services.sh up --from-terraform
+# Scale all services to production counts
+./scripts/scale-services.sh dev up
 
 # Or specify cluster directly
-./scripts/scale-services.sh up --cluster temporal-dev-cluster --region eu-west-1
+./scripts/scale-services.sh dev up --cluster temporal-dev-cluster --region eu-west-1
 
 # To scale down (e.g., for cost savings)
-./scripts/scale-services.sh down --from-terraform
+./scripts/scale-services.sh dev down
 ```
 
 ## Remote Access
@@ -424,7 +428,7 @@ The dashboards are baked into a custom Grafana image with pre-configured datasou
 ./scripts/build-grafana.sh us-east-1
 
 # Or use Terraform outputs for region (after initial deploy)
-./scripts/build-grafana.sh --from-terraform
+./scripts/build-grafana.sh dev
 
 # Update terraform.tfvars with the new image
 # grafana_image = "<account>.dkr.ecr.<region>.amazonaws.com/temporal-grafana:latest"
@@ -483,11 +487,10 @@ The deployment includes a benchmarking system for measuring Temporal performance
 
 ```bash
 # Run with default configuration (100 WPS, 5 minutes, simple workflow)
-./scripts/run-benchmark.sh --from-terraform --wait
+./scripts/run-benchmark.sh bench --wait
 
 # Run with custom parameters
-./scripts/run-benchmark.sh \
-  --from-terraform \
+./scripts/run-benchmark.sh bench \
   --namespace benchmark \
   --workflow-type simple \
   --rate 50 \
@@ -519,10 +522,10 @@ The deployment includes a benchmarking system for measuring Temporal performance
 
 ```bash
 # Get results from the most recent benchmark run
-./scripts/get-benchmark-results.sh --from-terraform
+./scripts/get-benchmark-results.sh bench
 
 # Get results from a specific task
-./scripts/get-benchmark-results.sh --task-id <task-id> --from-terraform
+./scripts/get-benchmark-results.sh bench --task-id <task-id>
 ```
 
 ### Recommended Starting Parameters
@@ -531,11 +534,11 @@ For initial testing with the production configuration (4 history, 3 matching, 2 
 
 ```bash
 # Start with a low rate to establish baseline
-./scripts/run-benchmark.sh --from-terraform --rate 25 --duration 2m --wait
+./scripts/run-benchmark.sh bench --rate 25 --duration 2m --wait
 
 # Gradually increase rate
-./scripts/run-benchmark.sh --from-terraform --rate 50 --duration 2m --wait
-./scripts/run-benchmark.sh --from-terraform --rate 100 --duration 5m --wait
+./scripts/run-benchmark.sh bench --rate 50 --duration 2m --wait
+./scripts/run-benchmark.sh bench --rate 100 --duration 5m --wait
 ```
 
 ### Benchmark Results (January 2026)
@@ -705,12 +708,12 @@ If services are stuck in crash loops due to stale cluster membership (common aft
 
 ```bash
 # Full recovery: scale down, clean membership, scale up
-./scripts/cluster-management.sh recover
+./scripts/cluster-management.sh dev recover
 
 # Or run steps individually:
-./scripts/cluster-management.sh scale-down
-./scripts/cluster-management.sh clean-membership  # Prompts to DELETE FROM cluster_membership
-./scripts/cluster-management.sh scale-up
+./scripts/cluster-management.sh dev scale-down
+./scripts/cluster-management.sh dev clean-membership  # Prompts to DELETE FROM cluster_membership
+./scripts/cluster-management.sh dev scale-up
 ```
 
 ### After Image Updates
@@ -718,7 +721,7 @@ If services are stuck in crash loops due to stale cluster membership (common aft
 After pushing new images to ECR, force new deployments:
 
 ```bash
-./scripts/cluster-management.sh force-deploy
+./scripts/cluster-management.sh dev force-deploy
 ```
 
 ### Check Cluster Status
@@ -726,7 +729,7 @@ After pushing new images to ECR, force new deployments:
 View EC2 instances and service status:
 
 ```bash
-./scripts/cluster-management.sh status
+./scripts/cluster-management.sh dev status
 ```
 
 ## ADOT Sidecar for Metrics
