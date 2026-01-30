@@ -85,7 +85,7 @@ loki.process "enrich_labels" {
   }
   
   // Try to parse JSON logs (Temporal uses structured logging)
-  // drop_malformed = false allows plain text logs (e.g., benchmark-worker) to pass through
+  // drop_malformed = false allows plain text logs to pass through
   stage.json {
     expressions = {
       level   = "level",
@@ -96,10 +96,22 @@ loki.process "enrich_labels" {
     drop_malformed = false
   }
   
+  // For non-JSON logs, try to extract level from common patterns
+  // Matches: [INFO], [WARN], [ERROR], INFO:, WARN:, ERROR:, level=info, etc.
+  stage.regex {
+    expression = "(?i)\\[?(?P<level_fallback>DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\]?[:\\s]"
+  }
+  
+  // Use extracted level, or fallback level, or default to "info"
+  stage.template {
+    source   = "level_final"
+    template = "{{ if .level }}{{ .level }}{{ else if .level_fallback }}{{ .level_fallback | ToLower }}{{ else }}info{{ end }}"
+  }
+  
   // Add level as a label for filtering
   stage.labels {
     values = {
-      level = "",
+      level = "level_final",
     }
   }
   
