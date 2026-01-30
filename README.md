@@ -10,7 +10,8 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 - **Aurora DSQL**: Serverless PostgreSQL-compatible persistence with IAM authentication
 - **OpenSearch Provisioned**: 3-node m6g.large.search cluster for visibility
 - **Amazon Managed Prometheus**: Metrics collection and storage
-- **ADOT Collector**: AWS Distro for OpenTelemetry for Prometheus metrics scraping
+- **Grafana Alloy**: Prometheus metrics scraping and log collection to Loki
+- **Loki on ECS**: Centralized log aggregation with S3 backend
 - **Grafana on ECS**: Dashboards and visualization
 - **Private-only networking**: No public endpoints, VPC endpoints for AWS services
 - **Stable IPs**: EC2 instances provide stable IPs for Temporal's ringpop cluster membership
@@ -30,14 +31,14 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
 │  │  │ History  │ │ Matching │ │ Frontend │ │  Worker  │ │ UI/Graf  │  │    │
 │  │  │  ×16     │ │  ×16     │ │  ×9      │ │  ×3      │ │          │  │    │
 │  │  │ 4vCPU ea │ │ 1vCPU ea │ │ 2vCPU ea │ │ 0.5vCPU  │ │          │  │    │
-│  │  │ +ADOT    │ │ +ADOT    │ │ +ADOT    │ │          │ │          │  │    │
+│  │  │ +Alloy   │ │ +Alloy   │ │ +Alloy   │ │          │ │          │  │    │
 │  │  │ sidecar  │ │ sidecar  │ │ sidecar  │ │          │ │          │  │    │
 │  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │    │
 │  │                                                                     │    │
 │  │  Benchmark Cluster: 13 × m8g.4xlarge (208 vCPU, scale-from-zero)   │    │
 │  │  ┌──────────────────────────────────┐ ┌──────────────────────────┐ │    │
 │  │  │ Benchmark Workers ×51 (4vCPU ea) │ │ Generator ×1 (4vCPU)     │ │    │
-│  │  │ +ADOT sidecar                    │ │ +ADOT sidecar            │ │    │
+│  │  │ +Alloy sidecar                   │ │ +Alloy sidecar           │ │    │
 │  │  └──────────────────────────────────┘ └──────────────────────────┘ │    │
 │  │                                                                     │    │
 │  │  Service Connect (Envoy Mesh) for inter-service communication      │    │
@@ -65,9 +66,9 @@ Main Cluster (10 instances, 160 vCPU):
 
 | Service | Replicas | CPU | Memory | Notes |
 |---------|----------|-----|--------|-------|
-| History | 16 | 4 vCPU | 8 GiB | 4096 shards, +ADOT sidecar |
-| Matching | 16 | 1 vCPU | 2 GiB | Task queue management, +ADOT sidecar |
-| Frontend | 9 | 2 vCPU | 4 GiB | gRPC API gateway, +ADOT sidecar |
+| History | 16 | 4 vCPU | 8 GiB | 4096 shards, +Alloy sidecar |
+| Matching | 16 | 1 vCPU | 2 GiB | Task queue management, +Alloy sidecar |
+| Frontend | 9 | 2 vCPU | 4 GiB | gRPC API gateway, +Alloy sidecar |
 | Worker | 3 | 0.5 vCPU | 1 GiB | System workflows |
 | UI | 1 | 0.25 vCPU | 512 MiB | Web interface |
 | Grafana | 1 | 0.25 vCPU | 512 MiB | Dashboards |
@@ -443,7 +444,7 @@ The custom image includes:
 
 | Datasource | Type | Purpose |
 |------------|------|---------|
-| Prometheus | Amazon Managed Prometheus | Temporal server metrics (via ADOT) |
+| Prometheus | Amazon Managed Prometheus | Temporal server metrics (via Alloy) |
 | CloudWatch | AWS CloudWatch | Aurora DSQL service metrics |
 
 ### DSQL Plugin Metrics
@@ -471,7 +472,7 @@ The deployment includes a benchmarking system for measuring Temporal performance
 
 - **Dedicated EC2 nodes**: Scale-from-zero ASG with `workload=benchmark` attribute
 - **Capacity provider**: ECS managed scaling provisions instances on demand
-- **Metrics collection**: Prometheus metrics exposed on port 9090, scraped by ADOT
+- **Metrics collection**: Prometheus metrics exposed on port 9090, scraped by Alloy
 
 ### Build Benchmark Image
 
@@ -564,7 +565,7 @@ See [Benchmark Results](docs/benchmark-results.md) for detailed metrics and anal
 
 ### Viewing Benchmark Metrics
 
-Benchmark metrics are scraped by ADOT and sent to Amazon Managed Prometheus. View them in Grafana:
+Benchmark metrics are scraped by Alloy and sent to Amazon Managed Prometheus. View them in Grafana:
 
 1. Port forward to Grafana: `terraform output -raw grafana_port_forward_command`
 2. Open http://localhost:3000
@@ -684,23 +685,18 @@ aws logs tail /ecs/temporal-dev/temporal-frontend --follow --region eu-west-1
 
 3. Verify security group allows outbound to DSQL endpoint
 
-### ADOT metrics not appearing in AMP
+### Alloy metrics not appearing in AMP
 
-1. Check ADOT collector logs:
+1. Check Alloy sidecar logs:
    ```bash
-   aws logs tail /ecs/temporal-dev/adot --follow --region eu-west-1
+   aws logs tail /ecs/temporal-dev/temporal-history --follow --region eu-west-1
    ```
 
-2. Verify ADOT can reach Temporal services:
-   - Check security groups allow ADOT to access port 9090 on Temporal services
+2. Verify Alloy can reach Temporal services:
+   - Check security groups allow traffic on port 9090
    - Verify Service Connect DNS names resolve correctly
 
 3. Check IAM role has `aps:RemoteWrite` permissions
-
-4. Verify SSM Parameter Store contains valid ADOT config:
-   ```bash
-   aws ssm get-parameter --name /temporal-dev/adot/config --region eu-west-1
-   ```
 
 ### Crash Loop Recovery (Ringpop Issues)
 
@@ -732,13 +728,14 @@ View EC2 instances and service status:
 ./scripts/cluster-management.sh dev status
 ```
 
-## ADOT Sidecar for Metrics
+## Alloy Sidecar for Metrics and Logs
 
-Each Temporal service task includes an ADOT (AWS Distro for OpenTelemetry) sidecar container for metrics collection:
+Each Temporal service task includes a Grafana Alloy sidecar container for observability:
 
 - **Prometheus Scraping**: Scrapes metrics from localhost:9090 within the same task
 - **AMP Remote Write**: Sends metrics to Amazon Managed Prometheus using SigV4 authentication
-- **Per-Task Collection**: Each service replica has its own ADOT sidecar for reliable metrics
+- **Log Collection**: Collects container logs and sends to Loki
+- **Per-Task Collection**: Each service replica has its own Alloy sidecar for reliable metrics
 
 The sidecar approach provides better reliability than a centralized collector - if a service task fails, its metrics are still collected up until failure. Configuration is embedded in the task definition.
 
@@ -788,8 +785,8 @@ curl -G --data-urlencode 'query=temporal_workflow_completed_total' \
 | grafana_cpu | Grafana CPU units | number | 256 | no |
 | grafana_memory | Grafana memory MB | number | 512 | no |
 | grafana_admin_secret_name | Secrets Manager secret name | string | "grafana/admin" | no |
-| adot_cpu | ADOT collector CPU units | number | 512 | no |
-| adot_memory | ADOT collector memory MB | number | 1024 | no |
+| alloy_cpu | Alloy sidecar CPU units | number | 256 | no |
+| alloy_memory | Alloy sidecar memory MB | number | 512 | no |
 | log_retention_days | CloudWatch Logs retention | number | 7 | no |
 
 ## Outputs
@@ -802,8 +799,7 @@ curl -G --data-urlencode 'query=temporal_workflow_completed_total' \
 | opensearch_endpoint | OpenSearch domain endpoint |
 | prometheus_remote_write_endpoint | Prometheus remote write URL |
 | prometheus_query_endpoint | Prometheus query URL |
-| adot_service_name | ADOT collector ECS service name |
-| adot_ecs_exec_command | ECS Exec command for ADOT container |
+| loki_endpoint | Loki endpoint for log queries |
 | temporal_ui_port_forward_command | Command to port forward Temporal UI |
 | grafana_port_forward_command | Command to port forward Grafana |
 | temporal_*_ecs_exec_command | ECS Exec commands for each service |
