@@ -322,6 +322,11 @@ output "benchmark_security_group_id" {
   value       = var.benchmark_enabled ? module.benchmark[0].security_group_id : null
 }
 
+output "benchmark_generator_service_name" {
+  description = "Name of the Benchmark Generator ECS service"
+  value       = var.benchmark_enabled ? module.benchmark[0].generator_service_name : null
+}
+
 # =============================================================================
 # ECS EXEC COMMANDS
 # =============================================================================

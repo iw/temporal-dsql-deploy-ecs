@@ -43,42 +43,44 @@ resource "aws_ecs_task_definition" "benchmark_worker" {
     name = "alloy-config"
   }
 
-  container_definitions = jsonencode([
-    {
-      name      = "benchmark-worker"
-      image     = var.benchmark_image != "" ? var.benchmark_image : "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal"
-      essential = true
-      # Reserve CPU/memory for Alloy sidecar (init: 64 CPU, 128 MB + sidecar: 128 CPU, 256 MB = 192 CPU, 384 MB)
-      cpu    = var.worker_cpu - 192
-      memory = var.worker_memory - 384
+  container_definitions = jsonencode(concat(
+    [
+      {
+        name      = "benchmark-worker"
+        image     = var.benchmark_image != "" ? var.benchmark_image : "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal"
+        essential = true
+        # Reserve CPU/memory for Alloy sidecar when enabled (init: 64 CPU, 128 MB + sidecar: 128 CPU, 256 MB = 192 CPU, 384 MB)
+        cpu    = var.alloy_worker_sidecar_container != null ? var.worker_cpu - 192 : var.worker_cpu
+        memory = var.alloy_worker_sidecar_container != null ? var.worker_memory - 384 : var.worker_memory
 
-      portMappings = [
-        {
-          containerPort = 9090
-          protocol      = "tcp"
-          name          = "metrics"
+        portMappings = [
+          {
+            containerPort = 9090
+            protocol      = "tcp"
+            name          = "metrics"
+          }
+        ]
+
+        environment = [
+          { name = "TEMPORAL_ADDRESS", value = "temporal-frontend:7233" },
+          { name = "BENCHMARK_NAMESPACE", value = "benchmark" },
+          { name = "BENCHMARK_WORKER_ONLY", value = "true" },
+          # These are not used in worker-only mode but required for config validation
+          { name = "BENCHMARK_WORKFLOW_TYPE", value = "simple" },
+          { name = "BENCHMARK_TARGET_RATE", value = "100" },
+          { name = "BENCHMARK_DURATION", value = "5m" }
+        ]
+
+        # No log configuration - logs collected by Alloy sidecar
+
+        linuxParameters = {
+          initProcessEnabled = true
         }
-      ]
-
-      environment = [
-        { name = "TEMPORAL_ADDRESS", value = "temporal-frontend:7233" },
-        { name = "BENCHMARK_NAMESPACE", value = "benchmark" },
-        { name = "BENCHMARK_WORKER_ONLY", value = "true" },
-        # These are not used in worker-only mode but required for config validation
-        { name = "BENCHMARK_WORKFLOW_TYPE", value = "simple" },
-        { name = "BENCHMARK_TARGET_RATE", value = "100" },
-        { name = "BENCHMARK_DURATION", value = "5m" }
-      ]
-
-      # No log configuration - logs collected by Alloy sidecar
-
-      linuxParameters = {
-        initProcessEnabled = true
       }
-    },
-    var.alloy_worker_init_container,
-    var.alloy_worker_sidecar_container
-  ])
+    ],
+    var.alloy_worker_init_container != null ? [var.alloy_worker_init_container] : [],
+    var.alloy_worker_sidecar_container != null ? [var.alloy_worker_sidecar_container] : []
+  ))
 
   tags = {
     Name    = "${var.project_name}-benchmark-worker"

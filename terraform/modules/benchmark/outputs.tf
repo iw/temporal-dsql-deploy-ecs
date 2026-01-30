@@ -43,6 +43,11 @@ output "asg_name" {
 # Service Outputs
 # -----------------------------------------------------------------------------
 
+output "generator_service_name" {
+  description = "Name of the Benchmark Generator ECS service"
+  value       = aws_ecs_service.benchmark_generator.name
+}
+
 output "worker_service_name" {
   description = "Name of the Benchmark Worker ECS service"
   value       = aws_ecs_service.benchmark_worker.name

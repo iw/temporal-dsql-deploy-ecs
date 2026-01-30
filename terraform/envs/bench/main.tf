@@ -505,7 +505,7 @@ module "temporal_ui" {
 # load testing and performance validation.
 
 # -----------------------------------------------------------------------------
-# Alloy Sidecar for Benchmark Worker
+# Alloy Sidecar for Benchmark Generator
 # -----------------------------------------------------------------------------
 module "alloy_benchmark" {
   source = "../../modules/alloy-sidecar"
@@ -521,34 +521,51 @@ module "alloy_benchmark" {
 }
 
 # -----------------------------------------------------------------------------
+# Alloy Sidecar for Benchmark Worker
+# -----------------------------------------------------------------------------
+module "alloy_benchmark_worker" {
+  source = "../../modules/alloy-sidecar"
+  count  = var.benchmark_enabled && var.loki_enabled ? 1 : 0
+
+  project_name                     = var.project_name
+  service_name                     = "benchmark-worker"
+  prometheus_remote_write_endpoint = module.observability.prometheus_remote_write_endpoint
+  loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
+  region                           = var.region
+  alloy_image                      = var.alloy_image
+  log_group_name                   = "/ecs/${var.project_name}/benchmark-worker"
+}
+
+# -----------------------------------------------------------------------------
 # Benchmark Module
 # -----------------------------------------------------------------------------
 module "benchmark" {
   source = "../../modules/benchmark"
   count  = var.benchmark_enabled ? 1 : 0
 
-  project_name                  = var.project_name
-  region                        = var.region
-  cluster_id                    = module.ecs_cluster.cluster_id
-  cluster_name                  = module.ecs_cluster.cluster_name
-  vpc_id                        = module.vpc.vpc_id
-  vpc_cidr                      = module.vpc.vpc_cidr
-  subnet_ids                    = module.vpc.private_subnet_ids
-  service_connect_namespace_arn = module.ecs_cluster.service_connect_namespace_arn
-  execution_role_arn            = module.iam.execution_role_arn
-  prometheus_workspace_arn      = module.observability.prometheus_workspace_arn
-  frontend_security_group_id    = module.temporal_frontend.security_group_id
-  instance_security_group_id    = module.ec2_capacity.instance_security_group_id
-  instance_profile_arn          = module.ec2_capacity.instance_profile_arn
-  instance_type                 = var.benchmark_instance_type
-  benchmark_image               = var.benchmark_image
-  cpu                           = var.benchmark_cpu
-  memory                        = var.benchmark_memory
-  max_instances                 = var.benchmark_max_instances
-  log_retention_days            = var.log_retention_days
-  loki_enabled                  = var.loki_enabled
-  alloy_init_container          = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark[0].init_container_definition : null
-  alloy_sidecar_container       = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark[0].sidecar_container_definition : null
+  project_name                   = var.project_name
+  region                         = var.region
+  cluster_id                     = module.ecs_cluster.cluster_id
+  cluster_name                   = module.ecs_cluster.cluster_name
+  vpc_id                         = module.vpc.vpc_id
+  vpc_cidr                       = module.vpc.vpc_cidr
+  subnet_ids                     = module.vpc.private_subnet_ids
+  service_connect_namespace_arn  = module.ecs_cluster.service_connect_namespace_arn
+  execution_role_arn             = module.iam.execution_role_arn
+  prometheus_workspace_arn       = module.observability.prometheus_workspace_arn
+  frontend_security_group_id     = module.temporal_frontend.security_group_id
+  instance_security_group_id     = module.ec2_capacity.instance_security_group_id
+  instance_profile_arn           = module.ec2_capacity.instance_profile_arn
+  instance_type                  = var.benchmark_instance_type
+  benchmark_image                = var.benchmark_image
+  cpu                            = var.benchmark_cpu
+  memory                         = var.benchmark_memory
+  max_instances                  = var.benchmark_max_instances
+  log_retention_days             = var.log_retention_days
+  alloy_init_container           = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark[0].init_container_definition : null
+  alloy_sidecar_container        = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark[0].sidecar_container_definition : null
+  alloy_worker_init_container    = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark_worker[0].init_container_definition : null
+  alloy_worker_sidecar_container = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark_worker[0].sidecar_container_definition : null
 }
 
 

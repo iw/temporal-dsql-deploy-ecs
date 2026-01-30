@@ -20,10 +20,11 @@
 discovery.docker "containers" {
   host = "unix:///var/run/docker.sock"
   
-  // Only discover containers in the same task (filter by task ID)
+  // Only discover containers in the same ECS task
+  // The TASK_ARN_PLACEHOLDER is replaced at runtime by the init container
   filter {
     name   = "label"
-    values = ["com.amazonaws.ecs.task-arn"]
+    values = ["com.amazonaws.ecs.task-arn=TASK_ARN_PLACEHOLDER"]
   }
 }
 
@@ -99,19 +100,14 @@ loki.process "enrich_labels" {
   // For non-JSON logs, try to extract level from common patterns
   // Matches: [INFO], [WARN], [ERROR], INFO:, WARN:, ERROR:, level=info, etc.
   stage.regex {
-    expression = "(?i)\\[?(?P<level_fallback>DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\]?[:\\s]"
+    expression = "(?i)\\[?(?P<detected_level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\]?[:\\s]"
   }
   
-  // Use extracted level, or fallback level, or default to "info"
-  stage.template {
-    source   = "level_final"
-    template = "{{ if .level }}{{ .level }}{{ else if .level_fallback }}{{ .level_fallback | ToLower }}{{ else }}info{{ end }}"
-  }
-  
-  // Add level as a label for filtering
+  // Add level as a label for filtering (uses JSON level if available, otherwise detected_level)
   stage.labels {
     values = {
-      level = "level_final",
+      level          = "",
+      detected_level = "",
     }
   }
   
@@ -173,10 +169,10 @@ prometheus.relabel "add_labels" {
     replacement  = "${cluster_name}"
   }
   
-  // Add task_id from environment (set at runtime)
+  // Add task_id (injected by init container at runtime)
   rule {
     target_label = "task_id"
-    replacement  = env("ECS_TASK_ID")
+    replacement  = "TASK_ID_PLACEHOLDER"
   }
 }
 

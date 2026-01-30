@@ -10,7 +10,7 @@ set -eo pipefail
 #   environment        Environment to operate on (dev, bench, prod)
 #
 # Commands:
-#   up      Scale services to specified WPS configuration
+#   up      Scale services up (uses terraform.tfvars counts, or --wps preset)
 #   down    Scale all services to 0 replicas
 #
 # Options:
@@ -19,13 +19,14 @@ set -eo pipefail
 #   --apply                Update terraform.tfvars and run terraform apply (requires --wps)
 #   -h, --help             Show this help message
 #
-# WPS Presets:
+# WPS Presets (optional, for --wps flag):
 #   --wps 50   history=3,  matching=2,  frontend=2, worker=2
 #   --wps 100  history=6,  matching=4,  frontend=3, worker=2
 #   --wps 200  history=16, matching=16, frontend=9, worker=3
 #   --wps 400  history=16, matching=16, frontend=9, worker=3
 #
 # Examples:
+#   ./scripts/scale-services.sh dev up                     # Scale using terraform.tfvars counts
 #   ./scripts/scale-services.sh dev up --wps 100           # Scale dev for 100 WPS
 #   ./scripts/scale-services.sh bench up --wps 200 --apply # Full setup with terraform
 #   ./scripts/scale-services.sh prod down                  # Scale prod to 0
@@ -296,6 +297,55 @@ get_terraform_outputs() {
     echo -e "${GREEN}✓ Region: $AWS_REGION${NC}"
 }
 
+# Function to get current terraform-configured count for a service
+get_terraform_count() {
+    local service="$1"
+    local env_dir="$2"
+    local tfvars_file="$PROJECT_ROOT/$env_dir/terraform.tfvars"
+    
+    if [ ! -f "$tfvars_file" ]; then
+        # Default counts if no tfvars
+        case "$service" in
+            history)  echo 2 ;;
+            matching) echo 2 ;;
+            frontend) echo 2 ;;
+            worker)   echo 1 ;;
+            ui)       echo 1 ;;
+            grafana)  echo 1 ;;
+            *)        echo 1 ;;
+        esac
+        return
+    fi
+    
+    # Map service name to terraform variable
+    local var_name
+    case "$service" in
+        history)  var_name="temporal_history_count" ;;
+        matching) var_name="temporal_matching_count" ;;
+        frontend) var_name="temporal_frontend_count" ;;
+        worker)   var_name="temporal_worker_count" ;;
+        ui)       var_name="temporal_ui_count" ;;
+        grafana)  var_name="grafana_count" ;;
+        *)        echo 1; return ;;
+    esac
+    
+    # Extract value from tfvars
+    local count=$(grep "^${var_name}" "$tfvars_file" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ')
+    
+    if [ -n "$count" ] && [ "$count" -gt 0 ] 2>/dev/null; then
+        echo "$count"
+    else
+        # Default if not found or invalid
+        case "$service" in
+            history)  echo 2 ;;
+            matching) echo 2 ;;
+            frontend) echo 2 ;;
+            worker)   echo 1 ;;
+            *)        echo 1 ;;
+        esac
+    fi
+}
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -374,11 +424,13 @@ if [ -z "$COMMAND" ]; then
     exit 1
 fi
 
-# Validate --wps is required for 'up' command
+# Validate --wps is required for 'up' command (unless using --current)
 if [ "$COMMAND" = "up" ] && [ -z "$TARGET_WPS" ]; then
-    echo -e "${RED}Error: --wps is required for 'up' command${NC}"
-    echo "Valid values: 50, 100, 200, 400"
-    exit 1
+    # Default to using current terraform-configured counts
+    echo -e "${YELLOW}Note: No --wps specified, using terraform-configured counts${NC}"
+    USE_CURRENT_COUNTS=true
+else
+    USE_CURRENT_COUNTS=false
 fi
 
 # Validate --apply requires --wps
@@ -430,8 +482,13 @@ echo "Cluster: $CLUSTER_NAME"
 echo "Region: $AWS_REGION"
 echo "Command: $COMMAND"
 if [ "$COMMAND" = "up" ]; then
-    echo "Target WPS: $TARGET_WPS"
-    echo "Counts: history=$(get_wps_count history $TARGET_WPS), matching=$(get_wps_count matching $TARGET_WPS), frontend=$(get_wps_count frontend $TARGET_WPS), worker=$(get_wps_count worker $TARGET_WPS), ui=1, grafana=1"
+    if [ "$USE_CURRENT_COUNTS" = true ]; then
+        echo "Mode: Using terraform-configured counts"
+        echo "Counts: history=$(get_terraform_count history $ENV_DIR), matching=$(get_terraform_count matching $ENV_DIR), frontend=$(get_terraform_count frontend $ENV_DIR), worker=$(get_terraform_count worker $ENV_DIR), ui=$(get_terraform_count ui $ENV_DIR), grafana=$(get_terraform_count grafana $ENV_DIR)"
+    else
+        echo "Target WPS: $TARGET_WPS"
+        echo "Counts: history=$(get_wps_count history $TARGET_WPS), matching=$(get_wps_count matching $TARGET_WPS), frontend=$(get_wps_count frontend $TARGET_WPS), worker=$(get_wps_count worker $TARGET_WPS), ui=1, grafana=1"
+    fi
     if [ "$APPLY_TERRAFORM" = true ]; then
         echo "Resources: Will update terraform.tfvars and apply"
     fi
@@ -463,7 +520,11 @@ for SERVICE in "${SERVICES[@]}"; do
     
     # Determine target count
     if [ "$COMMAND" = "up" ]; then
-        TARGET_COUNT=$(get_wps_count "$SHORT_NAME" "$TARGET_WPS")
+        if [ "$USE_CURRENT_COUNTS" = true ]; then
+            TARGET_COUNT=$(get_terraform_count "$SHORT_NAME" "$ENV_DIR")
+        else
+            TARGET_COUNT=$(get_wps_count "$SHORT_NAME" "$TARGET_WPS")
+        fi
     else
         TARGET_COUNT=0
     fi

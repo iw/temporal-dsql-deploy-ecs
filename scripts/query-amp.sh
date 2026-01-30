@@ -2,6 +2,18 @@
 # Query Amazon Managed Prometheus
 # Usage: ./scripts/query-amp.sh <environment> "promql_query"
 # Example: ./scripts/query-amp.sh dev 'sum(rate(state_transition_count_sum[1m]))'
+#
+# ============================================================================
+# *Do not delete* - Manual range query example (timestamps in epoch seconds):
+#
+# AMP_BASE="https://aps-workspaces.eu-west-1.amazonaws.com/workspaces/<workspace-id>"
+# awscurl --service aps --region eu-west-1 \
+#   -X POST "${AMP_BASE}/api/v1/query_range" \
+#   -H 'Content-Type: application/x-www-form-urlencoded' \
+#   -d "query=histogram_quantile(0.95, sum by (le, job) (rate(persistence_latency_bucket[5m])))&start=1769781600&end=1769785200&step=60"
+#
+# Convert times: date -j -f "%Y-%m-%dT%H:%M:%SZ" "2026-01-30T14:00:00Z" +%s
+# ============================================================================
 
 set -euo pipefail
 

@@ -177,7 +177,7 @@ benchmark_enabled       = true
 benchmark_image         = "123456789012.dkr.ecr.eu-west-1.amazonaws.com/temporal-benchmark:latest"
 benchmark_cpu           = 2048
 benchmark_memory        = 4096
-benchmark_max_instances = 2
+benchmark_max_instances = 4
 
 # -----------------------------------------------------------------------------
 # Benchmark Scaling Recommendations (Dev)

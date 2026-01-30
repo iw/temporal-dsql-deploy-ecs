@@ -60,7 +60,7 @@ locals {
     name = "alloy-config"
   }
 
-  # Alloy config init container - fetches config from SSM
+  # Alloy config init container - fetches config from SSM and injects task ARN
   # This runs before the main Alloy container starts
   # No logConfiguration - uses default Docker json-file driver so Alloy can read logs
   init_container_definition = {
@@ -71,8 +71,11 @@ locals {
     memory     = 128
     entryPoint = ["/bin/sh", "-c"]
 
+    # Fetch config from SSM and inject the task ARN and task ID from ECS metadata
+    # The task ARN is used to filter Docker containers to only those in this task
+    # The task ID is used as a unique identifier for metrics
     command = [
-      "aws ssm get-parameter --name '/${var.project_name}/alloy/sidecar/${var.service_name}' --query 'Parameter.Value' --output text --region ${var.region} > /etc/alloy/config.alloy"
+      "TASK_ARN=$(curl -s $ECS_CONTAINER_METADATA_URI_V4/task | grep -o '\"TaskARN\":\"[^\"]*' | cut -d'\"' -f4) && TASK_ID=$(echo $TASK_ARN | grep -oE '[^/]+$') && aws ssm get-parameter --name '/${var.project_name}/alloy/sidecar/${var.service_name}' --query 'Parameter.Value' --output text --region ${var.region} | sed \"s|TASK_ARN_PLACEHOLDER|$TASK_ARN|g\" | sed \"s|TASK_ID_PLACEHOLDER|$TASK_ID|g\" > /etc/alloy/config.alloy"
     ]
 
     mountPoints = [

@@ -54,7 +54,7 @@
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_sum{service_name=~\"history.*\"}[1m]))", "legendFormat": "history transitions/sec" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_count{service_name=~\"history.*\"}[1m]))", "legendFormat": "history transitions/sec" }]
     },
     {
       "id": 103,
@@ -130,7 +130,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Service Latency p95 by Service",
-      "description": "95th percentile latency for each Temporal service. Frontend latency > 100ms may indicate downstream issues. History latency spikes often correlate with persistence problems.",
+      "description": "95th percentile latency for each Temporal service. Note: Frontend p95 of 60-90s is normal due to long-poll operations (PollWorkflowTaskQueue, PollActivityTaskQueue) which wait for work. Focus on History/Matching latency for actual performance issues.",
       "datasource": { "type": "prometheus", "uid": "amp" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "showPoints": "never" } }, "overrides": [] },
