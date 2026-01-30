@@ -1,0 +1,291 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Operator-console style Temporal server logs dashboard (Loki). Built for fast triage: error rate, top errors, service drilldown, and live stream.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Temporal Server Logs – Operator Console",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Operator Console (Logs)\n\nThis dashboard is designed for **fast, calm triage** during load tests and incidents.\n\n### What to do first\n1. **Look at error rate by service** (top row) → pick the service with the highest/fastest rising rate.\n2. Use **Recent errors** (table/logs) to identify the dominant failure mode.\n3. Use **Live stream** with `$search` (workflow/run/request IDs, task queue, or a substring like `dsql`, `deadline`, `timeout`, `serialization`).\n\n### Principles\n- **Filter first (labels)**: cluster → service → level.\n- **Search second (content)**: use `$search` only after you've narrowed down.\n- Prefer low-cardinality labels; keep IDs inside the log payload.\n- Leave `$search` blank to see all logs matching the label filters.\n"
+      }
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "Right now",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Error rate by service (logs/sec)",
+      "description": "Log-derived error rate. Use this to find where the control plane is hurting first.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate({cluster=\"$cluster\", job=\"temporal\", level=\"error\"}[1m]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Warn+Error rate by service (logs/sec)",
+      "description": "Early warning. If warn+error rises while errors stay flat, something is degrading before breaking.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate({cluster=\"$cluster\", job=\"temporal\", level=~\"warn|error\"}[1m]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Log volume by service (logs/sec)",
+      "description": "Helps spot bursts and chatty components. Useful when errors are low but volume jumps suddenly.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate({cluster=\"$cluster\", job=\"temporal\"}[1m]))",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "text",
+      "title": "What is this revealing?",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 15 },
+      "options": {
+        "mode": "markdown",
+        "content": "### How to read the top row\n- **Error rate by service** tells you *where to look first*.\n- **Warn+Error** is an early-warning indicator (degradation before failure).\n- **Log volume** helps catch bursts (deploy/load-test start, retries, noisy loops).\n\nIf **error rate** rises while your **state transitions slow**, persistence contention is a common amplifier.\n"
+      }
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Triage",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 8,
+      "type": "logs",
+      "title": "Recent errors (service-scoped)",
+      "description": "Start here. Identify the dominant error mode. Use $search for workflow/run/request IDs or key substrings.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 21 },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{cluster=\"$cluster\", job=\"temporal\", service_name=\"$service\", level=\"error\"} |= \"$search\"",
+          "maxLines": 2000
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "logs",
+      "title": "Recent warnings (service-scoped)",
+      "description": "Warnings often precede failures. If warn volume spikes, scroll up to see what started.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 21 },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{cluster=\"$cluster\", job=\"temporal\", service_name=\"$service\", level=\"warn\"} |= \"$search\"",
+          "maxLines": 2000
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "text",
+      "title": "Triage hints",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 31 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Quick filters that pay off\nTry `$search` values like:\n- `dsql`, `serialization`, `conflict`, `OCC`\n- `deadline`, `timeout`, `context canceled`\n- `Shard`, `ownership`, `membership`\n- `task queue`, `poller`, `no poller`\n\nIf you see repeated messages like **\"DSQL reservoir discard\"**, correlate with DSQL metrics (BytesRead/Write, CommitLatency, OccConflicts) and your app-level retry metrics.\n"
+      }
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Live stream",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "logs",
+      "title": "Live stream (service + level + search)",
+      "description": "This is your 'tail'. Keep it scoped: choose one service + warn/error by default. Use $search to zoom in.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 37 },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{cluster=\"$cluster\", job=\"temporal\", service_name=\"$service\", level=~\"$level\"} |= \"$search\"",
+          "maxLines": 5000
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Patterns",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Top repeating error messages (count over time)",
+      "description": "Shows which error messages repeat most. Parses JSON logs and groups by the 'msg' field.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 50 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by (msg) (count_over_time({cluster=\"$cluster\", job=\"temporal\", service_name=\"$service\", level=\"error\"} | json | __error__=\"\" [15m])))",
+          "legendFormat": "{{msg}}"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "text",
+      "title": "What is this revealing?",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 59 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Patterns\nThe **Top repeating error messages** panel helps you quickly identify the dominant failure mode.\n\nIf the top error is:\n- `deadline exceeded` / `context canceled` → check downstream latency (History/Persistence)\n- `serialization` / `OCC conflict` → contention hot spots, backoff tuning, pooling, and load patterns\n- `no poller` / task-queue errors → misconfigured workers or task queues\n"
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["temporal", "logs", "loki", "operator-console"],
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values(cluster)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "temporal-dev", "value": "temporal-dev" }
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values({cluster=\"$cluster\", job=\"temporal\"}, service_name)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "history", "value": "history" }
+      },
+      {
+        "name": "level",
+        "label": "Level",
+        "type": "custom",
+        "query": "error|warn,info|warn|error,error,warn,info",
+        "current": { "text": "error|warn", "value": "error|warn" }
+      },
+      {
+        "name": "search",
+        "label": "Search",
+        "type": "textbox",
+        "description": "Substring search (leave blank for all). Examples: workflow/run/request IDs; task queue; 'dsql'; 'timeout'; 'serialization'.",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+    "time_options": ["5m", "15m", "30m", "1h", "6h"]
+  },
+  "timezone": "browser",
+  "title": "Temporal Server Logs – Operator Console",
+  "uid": "temporal-server-logs-console",
+  "version": 1,
+  "weekStart": ""
+}

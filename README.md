@@ -433,6 +433,12 @@ The deployment includes pre-configured Grafana dashboards for monitoring Tempora
    - Poller utilization
    - Worker slot availability
 
+5. **Logs Operator Console** (`grafana/logs/operator-console.json`)
+   - Error rate by service (logs/sec)
+   - Recent errors and warnings (service-scoped)
+   - Live log stream with search
+   - Top repeating error patterns
+
 ### Building Custom Grafana Image
 
 The dashboards are baked into a custom Grafana image with pre-configured datasources:
