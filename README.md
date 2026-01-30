@@ -53,8 +53,8 @@ Terraform module for deploying Temporal workflow engine on AWS ECS with EC2 inst
                     ┌───────────┼───────────────┐
                     │           │               │
               ┌─────▼─────┐  ┌──▼───────────┐  ┌─────▼─────┐
-              │   DSQL    │  │ Prometheus   │  │  Secrets  │
-              │ (External)│  │   (AMP)      │  │  Manager  │
+              │   DSQL    │  │ Prometheus   │  │   Loki    │
+              │ (External)│  │   (AMP)      │  │  (ECS+S3) │
               └───────────┘  └──────────────┘  └───────────┘
 ```
 
@@ -287,24 +287,21 @@ export TEMPORAL_OPENSEARCH_HOST=$(terraform output -raw opensearch_endpoint)
 
 ### 9. Wait for EC2 Instances
 
-Wait for the 6 EC2 instances to register with the ECS cluster:
+Wait for the EC2 instances to register with the ECS cluster:
 
 ```bash
 ./scripts/cluster-management.sh dev wait-ec2
 ```
 
-This waits for all 6 instances to be registered before proceeding.
+This waits for all instances to be registered before proceeding.
 
 ### 10. Scale Up Services
 
 After schema setup is complete, scale up the Temporal services:
 
 ```bash
-# Scale all services to production counts
-./scripts/scale-services.sh dev up
-
-# Or specify cluster directly
-./scripts/scale-services.sh dev up --cluster temporal-dev-cluster --region eu-west-1
+# Scale all services for target WPS (50, 100, 200, or 400)
+./scripts/scale-services.sh dev up --wps 100
 
 # To scale down (e.g., for cost savings)
 ./scripts/scale-services.sh dev down
@@ -313,6 +310,8 @@ After schema setup is complete, scale up the Temporal services:
 ## Remote Access
 
 All services run in private subnets with no public endpoints. Access is via SSM Session Manager port forwarding.
+
+Note: Run `terraform output` commands from your environment directory (e.g., `terraform/envs/dev`).
 
 ### Access Temporal UI
 
@@ -445,6 +444,7 @@ The custom image includes:
 | Datasource | Type | Purpose |
 |------------|------|---------|
 | Prometheus | Amazon Managed Prometheus | Temporal server metrics (via Alloy) |
+| Loki | Grafana Loki on ECS | Centralized logs from all services |
 | CloudWatch | AWS CloudWatch | Aurora DSQL service metrics |
 
 ### DSQL Plugin Metrics
@@ -531,10 +531,10 @@ The deployment includes a benchmarking system for measuring Temporal performance
 
 ### Recommended Starting Parameters
 
-For initial testing with the production configuration (4 history, 3 matching, 2 frontend):
+For initial testing:
 
 ```bash
-# Start with a low rate to establish baseline
+# Start with 50 WPS to establish baseline
 ./scripts/run-benchmark.sh bench --rate 25 --duration 2m --wait
 
 # Gradually increase rate
@@ -764,7 +764,7 @@ curl -G --data-urlencode 'query=temporal_workflow_completed_total' \
 | temporal_admin_tools_image | Admin tools Docker image URI | string | - | yes |
 | dsql_cluster_endpoint | Aurora DSQL cluster endpoint | string | - | yes |
 | dsql_cluster_arn | Aurora DSQL cluster ARN | string | - | yes |
-| ec2_instance_type | EC2 instance type (ARM64) | string | "m7g.2xlarge" | no |
+| ec2_instance_type | EC2 instance type (ARM64) | string | "m8g.4xlarge" | no |
 | ec2_instance_count | Number of EC2 instances | number | 10 | no |
 | temporal_history_cpu | History service CPU units | number | 4096 | no |
 | temporal_history_memory | History service memory MB | number | 8192 | no |
