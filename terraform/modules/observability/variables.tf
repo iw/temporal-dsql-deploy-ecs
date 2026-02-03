@@ -86,6 +86,12 @@ variable "loki_task_role_arn" {
   default     = ""
 }
 
+variable "loki_enabled" {
+  description = "Whether to deploy Loki for log aggregation"
+  type        = bool
+  default     = true
+}
+
 # -----------------------------------------------------------------------------
 # Grafana Configuration
 # -----------------------------------------------------------------------------

@@ -196,33 +196,28 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 	var w worker.Worker
 	if !cfg.GeneratorOnly {
 		// Create a worker to process workflows in the benchmark namespace
-		// Optimized for high-throughput benchmarking:
-		// - High concurrent execution sizes for parallel processing
-		// - Increased poller counts for faster task pickup
-		// - Eager execution enabled for lower latency
-		// - Sticky execution enabled for workflow caching
+		// Optimized for high-throughput benchmarking with eager activities
+		//
+		// Key optimizations based on 400 WPS benchmark investigation:
+		// 1. Reduced activity pollers (4 vs 16) - eager activities bypass activity queue
+		// 2. Reduced sticky timeout (2s vs 5s) - faster fallback to non-sticky queue
+		// 3. High workflow task pollers (16) - maximize non-sticky queue throughput
 		workerOptions := worker.Options{
-			// Concurrent execution limits - high values for benchmark throughput
-			MaxConcurrentActivityExecutionSize:      200,
+			// Execution slots - high for throughput
 			MaxConcurrentWorkflowTaskExecutionSize:  200,
+			MaxConcurrentActivityExecutionSize:      50, // Reduced - eager activities don't need many
 			MaxConcurrentLocalActivityExecutionSize: 200,
 
-			// Poller counts - higher values for faster task pickup
-			// Rule: pollers should be significantly < execution size
+			// Pollers - optimized for workflow-heavy workloads with eager activities
 			MaxConcurrentWorkflowTaskPollers: 16,
-			MaxConcurrentActivityTaskPollers: 16,
+			MaxConcurrentActivityTaskPollers: 4, // Reduced from 16 - eager activities bypass queue
 
-			// Eager activity execution - reduces latency by executing locally when possible
-			// Activities requested from same workflow can start immediately without server round-trip
+			// Eager activity execution - reduces latency by executing locally
 			DisableEagerActivities:                  false,
-			MaxConcurrentEagerActivityExecutionSize: 100, // Allow up to 100 eager activities
+			MaxConcurrentEagerActivityExecutionSize: 100,
 
-			// Sticky execution timeout - how long to keep workflow state cached
-			// Default is 5s, keeping it for workflow caching benefits
-			StickyScheduleToStartTimeout: 5 * time.Second,
-
-			// No rate limiting for benchmark - maximize throughput
-			// WorkerActivitiesPerSecond: 0 (unlimited, default is 100k)
+			// Sticky execution - reduced timeout for faster fallback to non-sticky queue
+			StickyScheduleToStartTimeout: 2 * time.Second, // Reduced from 5s
 		}
 
 		w = worker.New(nsClient, DefaultTaskQueue, workerOptions)
@@ -239,6 +234,16 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 	}
 
 	// Create workflow generator with completion callback using namespace client
+	// MaxInflight limits concurrent in-flight workflows to prevent overwhelming the system
+	// when workflows take longer to complete than expected (backpressure control)
+	maxInflight := int64(cfg.TargetRate * 30) // Allow ~30 seconds worth of in-flight workflows
+	if maxInflight < 1000 {
+		maxInflight = 1000 // Minimum 1000 in-flight
+	}
+	if maxInflight > 10000 {
+		maxInflight = 10000 // Maximum 10000 in-flight
+	}
+
 	gen := generator.NewGenerator(
 		nsClient,
 		cfg,
@@ -247,6 +252,7 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 			r.metricsHandler.RecordWorkflowLatency(duration)
 			r.metricsHandler.RecordWorkflowResult(err == nil)
 		}),
+		generator.WithMaxInflight(maxInflight),
 	)
 
 	// Start generating workflows

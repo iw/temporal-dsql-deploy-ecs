@@ -352,12 +352,6 @@ variable "opensearch_instance_count" {
 # OBSERVABILITY CONFIGURATION
 # =============================================================================
 
-variable "loki_enabled" {
-  description = "Enable Loki for log aggregation"
-  type        = bool
-  default     = true
-}
-
 variable "loki_image" {
   description = "Loki Docker image URI (ARM64 compatible)"
   type        = string
@@ -506,7 +500,7 @@ variable "benchmark_cpu" {
 }
 
 variable "benchmark_memory" {
-  description = "Memory in MB for benchmark task"
+  description = "Memory in MB for benchmark generator task"
   type        = number
   default     = 8192
 
@@ -516,10 +510,32 @@ variable "benchmark_memory" {
   }
 }
 
+variable "benchmark_worker_cpu" {
+  description = "CPU units for benchmark worker task (4096 for 800 WPS)"
+  type        = number
+  default     = 4096
+
+  validation {
+    condition     = contains([256, 512, 1024, 2048, 4096], var.benchmark_worker_cpu)
+    error_message = "CPU must be a valid ECS CPU value: 256, 512, 1024, 2048, or 4096."
+  }
+}
+
+variable "benchmark_worker_memory" {
+  description = "Memory in MB for benchmark worker task (8192 for 800 WPS)"
+  type        = number
+  default     = 8192
+
+  validation {
+    condition     = var.benchmark_worker_memory >= 512 && var.benchmark_worker_memory <= 30720
+    error_message = "Memory must be between 512 MB and 30720 MB (30 GB)."
+  }
+}
+
 variable "benchmark_max_instances" {
   description = "Maximum number of EC2 instances for benchmark workloads. Bench uses more instances for high WPS testing."
   type        = number
-  default     = 8
+  default     = 10
 
   validation {
     condition     = var.benchmark_max_instances >= 1 && var.benchmark_max_instances <= 20
@@ -553,13 +569,66 @@ variable "dsql_reservoir_enabled" {
 }
 
 variable "dsql_reservoir_target_ready" {
-  description = "Target number of connections to maintain in the reservoir"
+  description = "Default target number of connections to maintain in the reservoir (used if per-service not specified)"
   type        = number
   default     = 50
 
   validation {
-    condition     = var.dsql_reservoir_target_ready >= 1 && var.dsql_reservoir_target_ready <= 200
-    error_message = "Reservoir target ready must be between 1 and 200."
+    condition     = var.dsql_reservoir_target_ready >= 1 && var.dsql_reservoir_target_ready <= 300
+    error_message = "Reservoir target ready must be between 1 and 300."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Per-Service Connection Pool Sizing (800 WPS Configuration)
+# -----------------------------------------------------------------------------
+# Total target: ~9,000 connections across all services
+# History: 16 × 250 = 4,000 (primary persistence load)
+# Matching: 16 × 150 = 2,400 (task queue operations)
+# Frontend: 9 × 100 = 900 (API gateway)
+# Worker: 3 × 50 = 150 (system workflows)
+
+variable "dsql_history_max_conns" {
+  description = "Max connections per History replica (300 for 800 WPS)"
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.dsql_history_max_conns >= 10 && var.dsql_history_max_conns <= 500
+    error_message = "History max connections must be between 10 and 500."
+  }
+}
+
+variable "dsql_matching_max_conns" {
+  description = "Max connections per Matching replica (150 for 800 WPS)"
+  type        = number
+  default     = 150
+
+  validation {
+    condition     = var.dsql_matching_max_conns >= 10 && var.dsql_matching_max_conns <= 300
+    error_message = "Matching max connections must be between 10 and 300."
+  }
+}
+
+variable "dsql_frontend_max_conns" {
+  description = "Max connections per Frontend replica (100 for 800 WPS)"
+  type        = number
+  default     = 100
+
+  validation {
+    condition     = var.dsql_frontend_max_conns >= 10 && var.dsql_frontend_max_conns <= 200
+    error_message = "Frontend max connections must be between 10 and 200."
+  }
+}
+
+variable "dsql_worker_max_conns" {
+  description = "Max connections per Worker replica (50 for 800 WPS)"
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.dsql_worker_max_conns >= 10 && var.dsql_worker_max_conns <= 100
+    error_message = "Worker max connections must be between 10 and 100."
   }
 }
 

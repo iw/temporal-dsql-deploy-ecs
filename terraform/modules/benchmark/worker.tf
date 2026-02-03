@@ -45,6 +45,17 @@ resource "aws_ecs_task_definition" "benchmark_worker" {
 
   container_definitions = jsonencode(concat(
     [
+      # Wait-for-frontend init container
+      # Ensures Temporal frontend is reachable via Service Connect before worker starts.
+      # This prevents connection errors during service startup when Service Connect
+      # DNS resolution may not be immediately available.
+      # Note: No logConfiguration - init container logs are minimal and not collected by Alloy
+      {
+        name      = "wait-for-frontend"
+        image     = "public.ecr.aws/docker/library/busybox:latest"
+        essential = false
+        command   = ["sh", "-c", "echo Waiting for temporal-frontend:7233...; until nc -z temporal-frontend 7233; do echo Frontend not ready, retrying in 2s...; sleep 2; done; echo Frontend is ready!"]
+      },
       {
         name      = "benchmark-worker"
         image     = var.benchmark_image != "" ? var.benchmark_image : "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal"
@@ -52,6 +63,14 @@ resource "aws_ecs_task_definition" "benchmark_worker" {
         # Reserve CPU/memory for Alloy sidecar when enabled (init: 64 CPU, 128 MB + sidecar: 128 CPU, 256 MB = 192 CPU, 384 MB)
         cpu    = var.alloy_worker_sidecar_container != null ? var.worker_cpu - 192 : var.worker_cpu
         memory = var.alloy_worker_sidecar_container != null ? var.worker_memory - 384 : var.worker_memory
+
+        # Wait for frontend to be reachable before starting
+        dependsOn = [
+          {
+            containerName = "wait-for-frontend"
+            condition     = "SUCCESS"
+          }
+        ]
 
         portMappings = [
           {

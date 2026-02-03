@@ -44,12 +44,9 @@ resource "aws_dynamodb_table" "dsql_rate_limiter" {
 # -----------------------------------------------------------------------------
 # Connection Lease Table
 # -----------------------------------------------------------------------------
-# This table is used for distributed connection count limiting across all
-# Temporal service instances. It ensures the cluster doesn't exceed DSQL's
-# 10,000 max connections limit.
-#
-# Requirements: 17.1, 17.6
-# -----------------------------------------------------------------------------
+# Used for distributed connection slot management across Temporal services.
+# Each service acquires blocks of connection slots to coordinate the global
+# connection limit to DSQL.
 
 resource "aws_dynamodb_table" "dsql_conn_lease" {
   count = var.conn_lease_enabled ? 1 : 0
@@ -63,7 +60,6 @@ resource "aws_dynamodb_table" "dsql_conn_lease" {
     type = "S"
   }
 
-  # Enable TTL for automatic cleanup of expired connection leases
   ttl {
     attribute_name = "ttl_epoch"
     enabled        = true

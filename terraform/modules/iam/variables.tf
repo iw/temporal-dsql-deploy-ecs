@@ -55,3 +55,9 @@ variable "loki_s3_bucket_arn" {
   description = "ARN of the S3 bucket for Loki storage"
   type        = string
 }
+
+variable "loki_enabled" {
+  description = "Whether Loki is enabled (determines if Loki IAM policies are created)"
+  type        = bool
+  default     = true
+}

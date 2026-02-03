@@ -125,9 +125,11 @@ variable "log_retention_days" {
 variable "alloy_init_container" {
   description = "Alloy init container definition (from alloy-sidecar module)"
   type        = any
+  default     = null
 }
 
 variable "alloy_sidecar_container" {
   description = "Alloy sidecar container definition (from alloy-sidecar module)"
   type        = any
+  default     = null
 }

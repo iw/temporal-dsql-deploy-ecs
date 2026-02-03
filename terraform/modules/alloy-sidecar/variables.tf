@@ -34,3 +34,9 @@ variable "alloy_image" {
   type        = string
   default     = "grafana/alloy:v1.12.2"
 }
+
+variable "log_group_name" {
+  description = "CloudWatch log group name for the service (used for log collection)"
+  type        = string
+  default     = ""
+}

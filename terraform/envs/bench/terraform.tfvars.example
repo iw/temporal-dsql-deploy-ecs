@@ -128,7 +128,6 @@ opensearch_instance_count   = 3
 # Loki: 1 replica × 512 CPU × 1024 MB = 512 CPU units, 1024 MB RAM
 # Grafana: 1 replica × 256 CPU × 512 MB = 256 CPU units, 512 MB RAM
 
-loki_enabled        = true
 loki_image          = "grafana/loki:3.6.4"
 loki_cpu            = 512
 loki_memory         = 1024
@@ -163,10 +162,24 @@ log_retention_days = 14
 # Pre-creates connections to avoid rate limit pressure under load.
 
 dsql_reservoir_enabled         = true
-dsql_reservoir_target_ready    = 50
 dsql_reservoir_base_lifetime   = "11m"
 dsql_reservoir_lifetime_jitter = "2m"
 dsql_reservoir_guard_window    = "45s"
+
+# -----------------------------------------------------------------------------
+# Per-Service Connection Pool Sizing (800 WPS Configuration)
+# -----------------------------------------------------------------------------
+# Total: ~8,250 connections across Temporal services (82.5% of DSQL 10k limit)
+# History: 16 × 300 = 4,800 (primary persistence load, OCC retries)
+# Matching: 16 × 150 = 2,400 (task queue operations)
+# Frontend: 9 × 100 = 900 (API gateway, light DB usage)
+# Worker: 3 × 50 = 150 (system workflows only)
+# Note: Benchmark workers connect via Temporal Frontend (gRPC), not direct DSQL
+
+dsql_history_max_conns  = 300
+dsql_matching_max_conns = 150
+dsql_frontend_max_conns = 100
+dsql_worker_max_conns   = 50
 
 # -----------------------------------------------------------------------------
 # Distributed Connection Leasing Configuration
@@ -176,21 +189,30 @@ dsql_reservoir_guard_window    = "45s"
 dsql_distributed_conn_lease_enabled = true
 
 # -----------------------------------------------------------------------------
-# Benchmark Configuration
+# Benchmark Configuration (Option B: 30 workers with high concurrency)
 # -----------------------------------------------------------------------------
 # Benchmark infrastructure is enabled for load testing.
 # Scale benchmark workers separately using ./scripts/scale-benchmark-workers.sh
+#
+# 800 WPS Configuration:
+# - 30 workers × 4096 CPU × 8192 MB = 120 vCPU, 240 GB RAM
+# - 1 generator × 4096 CPU × 8192 MB = 4 vCPU, 8 GB RAM
+# - Total benchmark: 124 vCPU, 248 GB RAM
+# - 10 × m8g.4xlarge = 160 vCPU, 640 GB RAM (77.5% utilization)
+# - Worker concurrency: 600 WFT, 600 Activity per worker
 
 benchmark_enabled       = true
 benchmark_cpu           = 4096
 benchmark_memory        = 8192
-benchmark_max_instances = 13
+benchmark_worker_cpu    = 4096
+benchmark_worker_memory = 8192
+benchmark_max_instances = 10
 
 # -----------------------------------------------------------------------------
-# Benchmark Scaling Recommendations
+# Benchmark Scaling Recommendations (800 WPS)
 # -----------------------------------------------------------------------------
-# | Target WPS | Workers | EC2 Instances | Notes           |
-# |------------|---------|---------------|-----------------|
-# | 100        | 30      | 4             | Conservative    |
-# | 200        | 40      | 6             | Moderate        |
-# | 400        | 51      | 13            | Max with quota  |
+# | Target WPS | Workers | EC2 Instances | Concurrency/Worker | Notes        |
+# |------------|---------|---------------|-------------------|--------------|
+# | 200        | 40      | 6             | 200 WFT, 200 Act  | Current      |
+# | 400        | 30      | 5             | 400 WFT, 400 Act  | High conc    |
+# | 800        | 30      | 8             | 600 WFT, 600 Act  | Max tuned    |

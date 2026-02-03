@@ -11,10 +11,16 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/client"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/temporalio/temporal-dsql-deploy-ecs/benchmark/internal/config"
 	"github.com/temporalio/temporal-dsql-deploy-ecs/benchmark/workflows"
 )
+
+// DefaultMaxInflight is the default maximum number of in-flight workflows.
+// This prevents the generator from overwhelming the system when workflows
+// take longer to complete than expected.
+const DefaultMaxInflight = 5000
 
 // GeneratorStats contains current generation statistics.
 type GeneratorStats struct {
@@ -79,6 +85,10 @@ type generator struct {
 	targetRate     float64
 	rampController *RampUpController
 
+	// Backpressure control - limits concurrent in-flight workflows
+	maxInflight int64
+	inflight    *semaphore.Weighted
+
 	// Lifecycle
 	mu      sync.Mutex
 	running bool
@@ -98,20 +108,32 @@ func WithCompletionCallback(cb CompletionCallback) GeneratorOption {
 	}
 }
 
+// WithMaxInflight sets the maximum number of concurrent in-flight workflows.
+// This provides backpressure to prevent overwhelming the system.
+func WithMaxInflight(max int64) GeneratorOption {
+	return func(g *generator) {
+		g.maxInflight = max
+	}
+}
+
 // NewGenerator creates a new WorkflowGenerator.
 func NewGenerator(c client.Client, cfg config.BenchmarkConfig, taskQueue string, opts ...GeneratorOption) WorkflowGenerator {
 	g := &generator{
-		client:     c,
-		cfg:        cfg,
-		taskQueue:  taskQueue,
-		targetRate: cfg.TargetRate,
-		stopCh:     make(chan struct{}),
-		doneCh:     make(chan struct{}),
+		client:      c,
+		cfg:         cfg,
+		taskQueue:   taskQueue,
+		targetRate:  cfg.TargetRate,
+		maxInflight: DefaultMaxInflight,
+		stopCh:      make(chan struct{}),
+		doneCh:      make(chan struct{}),
 	}
 
 	for _, opt := range opts {
 		opt(g)
 	}
+
+	// Initialize semaphore for backpressure control
+	g.inflight = semaphore.NewWeighted(g.maxInflight)
 
 	return g
 }
@@ -135,7 +157,8 @@ func (g *generator) Start(ctx context.Context) error {
 	slog.Info("Starting workflow generator",
 		"target_rate", g.targetRate,
 		"duration", g.cfg.Duration,
-		"ramp_up", g.cfg.RampUpDuration)
+		"ramp_up", g.cfg.RampUpDuration,
+		"max_inflight", g.maxInflight)
 
 	go g.runGenerator(ctx)
 
@@ -238,6 +261,15 @@ func (g *generator) runGenerator(ctx context.Context) {
 
 			// Start workflow with unique ID: <type>-<runID>-<counter>
 			workflowID := fmt.Sprintf("%s-%s-%d", g.cfg.WorkflowType, runID, workflowCounter.Add(1))
+
+			// Acquire semaphore slot for backpressure control
+			// This blocks if we have too many in-flight workflows
+			if err := g.inflight.Acquire(ctx, 1); err != nil {
+				// Context cancelled
+				slog.Info("Generator stopping: semaphore acquire cancelled")
+				return
+			}
+
 			g.wg.Add(1)
 			go g.startWorkflow(ctx, workflowID)
 		}
@@ -265,6 +297,7 @@ func abs(x float64) float64 {
 // startWorkflow starts a single workflow and tracks its completion.
 func (g *generator) startWorkflow(ctx context.Context, workflowID string) {
 	defer g.wg.Done()
+	defer g.inflight.Release(1) // Release semaphore slot when done
 
 	startTime := time.Now()
 	g.stats.incStarted()

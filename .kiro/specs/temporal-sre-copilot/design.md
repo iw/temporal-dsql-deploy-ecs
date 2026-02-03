@@ -280,24 +280,46 @@ Signals are classified into three categories that serve distinct purposes in hea
 
 Primary signals answer the forward progress question. They are the ONLY inputs to state transitions.
 
-| Signal | Description | Healthy Range |
-|--------|-------------|---------------|
-| State Transitions/sec | Workflow state machine progress | > 50/sec |
-| Task Completions/sec | Activity and workflow task completions | > 100/sec |
-| Backlog Age (sec) | Age of oldest pending task | < 30 sec |
-| Workflow Completion Rate | Workflows completing vs starting | > 95% |
+**Health State Gates:**
+- **CRITICAL**: Forward progress collapsed (signals 1/3/4/5) or backlog age critical
+- **STRESSED**: Progress continues but latency + backlog trending wrong (signals 2/4/8/11)
+- **HAPPY**: Otherwise
 
-### Amplifier Signals (Explain Why)
+| # | Signal | Description | Reveals | Critical | Stressed | Healthy |
+|---|--------|-------------|---------|----------|----------|---------|
+| 1 | State Transition Throughput | Workflow state machine progress | Real forward progress. If drops while RPS flat, systemic trouble. | < 10/sec | - | > 50/sec |
+| 2 | State Transition Latency (p99) | Early warning of contention | Often rises before anything fully breaks. | - | > 500ms | - |
+| 3 | Workflow Completion Rate | Success + terminal outcomes | User-visible "is work finishing?" | < 50% | - | > 95% |
+| 4 | History Backlog Age | Age of oldest pending task | Strongest predictor of cascading failures. | > 120s | > 30s | < 10s |
+| 5 | History Processing Rate | Tasks processed per second | Capacity vs demand. Falling rate with steady demand is red flag. | < 10/sec | - | - |
+| 6 | History Shard Churn Rate | Shard acquisitions + releases | Membership instability, deploy thrash. High churn is bad. | - | > 5/sec | - |
+| 7 | Frontend Error Rate | Errors by status code | When clients are actually impacted. Often lags behind stress. | - | - | - |
+| 8 | Frontend Latency (p99) | API surface degradation | Op-level breakdown helps find the hot path. | - | > 1000ms | - |
+| 9 | Matching Backlog Age | Workflow + activity task queues | "Work is waiting". Separates server vs worker issues. | - | - | - |
+| 10 | Poller Health | Poll success vs timeouts | Starvation and matching pressure. Catches "no poller". | - | timeout > 10% | - |
+| 11 | Persistence Latency (p99) | DB operation latency | Primary systemic dependency. If slow, everything amplifies. | - | > 100ms | - |
+| 12 | Persistence Error Rate | Errors and retries | "Slow but working" vs "failing". Essential for state transitions. | > 10/sec | - | - |
 
-Amplifiers explain WHY the state is what it is. They do NOT decide state—they provide context.
+### Amplifier Signals (14) - Explain Why
 
-| Signal | Description | Pressure Threshold |
-|--------|-------------|-------------------|
-| DSQL Latency (ms) | Persistence operation latency | > 100ms |
-| OCC Conflicts/sec | Optimistic concurrency conflicts | > 30/sec |
-| Pool Utilization (%) | Connection pool usage | > 80% |
-| Shard Churn Rate | Shard acquisitions + releases | > 5/sec |
-| Schedule-to-Start (ms) | Task queue wait time | > 100ms |
+Amplifiers explain WHY the state is what it is. They do NOT decide state—they guide the LLM's narrative and remediation suggestions.
+
+| # | Signal | Description | Why It Matters | Remediation Direction |
+|---|--------|-------------|----------------|----------------------|
+| 1 | Persistence Contention | OCC conflicts, CAS failures, serialization failures | Turns load into retry storms. You'll feel it everywhere. | Tune retries/backoff, increase History capacity, review pool sizes |
+| 2 | Connection Pool Saturation | In-use/max, wait count, wait duration | Creates artificial throttling + latency. Hidden "why did everything spike?" | Pool sizing, reduce churn, check token/creds refresh |
+| 3 | DB Connection Churn | Opens/sec, closes/sec | Kills performance, triggers auth/token failures with short-lived creds. | Fix token caching, tune reservoir lifetime |
+| 4 | Queue Depth | Task backlog size (not just age) | Age tells "lateness"; depth tells "how much work to drain". | Scale capacity, tune concurrency |
+| 5 | Retry/Backoff Time | Aggregate time spent retrying | Shows how much time burned just trying again. Great "amplification meter". | Tune retry policies, fix root cause |
+| 6 | Worker Saturation | Poller concurrency, task slots available/used | Even for server dashboards, tells if backlog is worker capacity issue. | Scale workers, increase concurrency limits |
+| 7 | History Cache Pressure | Hit rate, evictions, size | Cache thrash increases DB reads and latency. Common silent multiplier. | Increase cache size, tune eviction policy |
+| 8 | Shard Hot Spotting | Disproportionate load on subset of shards | One hot shard can dominate tail latency for whole cluster. | Rebalance shards, increase shard count |
+| 9 | gRPC Saturation | In-flight requests, server-side queueing | Tail latency can be network/serialization, not DB. | Tune connection pools, check network |
+| 10 | Runtime Pressure | Goroutines, blocked goroutines | Reveals internal starvation before external symptoms. | Scale instances, tune concurrency |
+| 11 | Host Resource Pressure | CPU throttling, memory RSS, GC pauses | GC/heap growth in History is a classic. Shape matters. | Scale instances, tune memory limits |
+| 12 | Rate Limiting Events | Internal quotas, persistence throttles | Creates "progress continues but slower" patterns that look like random latency. | Increase quotas, scale capacity |
+| 13 | Log Pattern Frequency | "deadline exceeded", "context canceled", etc. | A small set of repeated log messages often explains 80% of incidents. | Address root cause indicated by pattern |
+| 14 | Deploy/Scaling Churn | Task restarts, membership changes, leader changes | Change itself is an amplifier. Correlate with every spike. | Stabilize deployments, reduce churn |
 
 ### Narrative Signals (Logs Explain Transitions)
 
@@ -305,11 +327,198 @@ Log patterns provide narrative context for state transitions. They are fetched w
 
 | Pattern | Service | Indicates |
 |---------|---------|-----------|
+| `deadline exceeded` | all | Timeout pressure |
+| `context canceled` | all | Cancellation cascade |
+| `shard ownership` | history | Membership instability |
+| `member joined/left` | all | Ringpop membership change |
+| `no poller` | matching | Worker misconfiguration |
 | `reservoir discard` | history | Connection pool pressure |
 | `SQLSTATE 40001` | all | OCC serialization failure |
-| `member joined/left` | all | Ringpop membership change |
-| `shard acquired/released` | history | Shard ownership change |
 | `rate limit exceeded` | all | DSQL connection rate limit |
+| `shard acquired/released` | history | Shard ownership change |
+
+## Worker Health Model
+
+The Worker Health Model extends the signal taxonomy to capture worker-side health separately from server-side health. This enables the Copilot to distinguish between "server can't keep up" and "workers can't keep up" scenarios.
+
+**Source:** Temporal Workers presentation (Tihomir Surdilovic, 2024) - treated as authoritative worker execution doctrine.
+
+### Worker Signals (Primary)
+
+Worker signals answer: "Can workers make forward progress?" These are collected from SDK metrics emitted by worker processes.
+
+| # | Signal | Metric | Healthy | Stressed | Critical |
+|---|--------|--------|---------|----------|----------|
+| W1 | WFT Schedule-to-Start | `temporal_workflow_task_schedule_to_start_latency` | < 50ms | 50-200ms | > 200ms |
+| W2 | Activity Schedule-to-Start | `temporal_activity_schedule_to_start_latency` | < 100ms | 100-500ms | > 500ms |
+| W3 | Workflow Slots Available | `temporal_worker_task_slots_available{worker_type="WorkflowWorker"}` | > 50% | 10-50% | 0 |
+| W4 | Activity Slots Available | `temporal_worker_task_slots_available{worker_type="ActivityWorker"}` | > 50% | 10-50% | 0 |
+| W5 | Workflow Pollers | `temporal_num_pollers{poller_type="workflow_task"}` | > 0 | - | 0 |
+| W6 | Activity Pollers | `temporal_num_pollers{poller_type="activity_task"}` | > 0 | - | 0 |
+
+**Critical Threshold:** `task_slots_available == 0` means the worker stops polling entirely.
+
+### Worker Amplifiers
+
+Worker amplifiers explain WHY worker health is degraded.
+
+| # | Signal | Metric | Why It Matters |
+|---|--------|--------|----------------|
+| WA1 | Sticky Cache Size | `temporal_sticky_cache_size` | Large cache = memory pressure, small cache = replay overhead |
+| WA2 | Sticky Cache Hit Rate | `temporal_sticky_cache_hit / (hit + miss)` | Low hit rate = excessive history replay, DB reads |
+| WA3 | Sticky Cache Miss Rate | `rate(temporal_sticky_cache_miss[1m])` | High miss rate = workflow state not cached |
+| WA4 | Long Poll Latency | `temporal_long_request_latency` | High latency = network/service pressure |
+| WA5 | Long Poll Failures | `temporal_long_request_failure` | Failures = connectivity issues |
+| WA6 | Poller/Executor Mismatch | pollers > executor slots | "Makes no sense to configure more pollers than executor slots" |
+
+### Bottleneck Classification
+
+The Copilot classifies bottlenecks to guide remediation:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      BOTTLENECK CLASSIFICATION                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Assess Server Health (existing model)                                   │
+│     ├─ If CRITICAL → stop (worker advice irrelevant)                        │
+│     └─ If HAPPY/STRESSED → continue to step 2                               │
+│                                                                             │
+│  2. Assess Worker Readiness                                                 │
+│     ├─ Slots available?                                                     │
+│     ├─ Schedule-to-start latency?                                           │
+│     ├─ Poll success vs empty?                                               │
+│     └─ Cache miss rate?                                                     │
+│                                                                             │
+│  3. Classify Bottleneck                                                     │
+│     ├─ SERVER_LIMITED: Server can't keep up                                 │
+│     │   - High backlog age, persistence latency                             │
+│     │   - Workers are idle or underutilized                                 │
+│     │                                                                       │
+│     ├─ WORKER_LIMITED: Workers can't keep up                                │
+│     │   - Slots exhausted, high schedule-to-start                           │
+│     │   - Server backlog is low                                             │
+│     │                                                                       │
+│     ├─ MIXED: Both under pressure                                           │
+│     │   - Server backlog AND worker saturation                              │
+│     │                                                                       │
+│     └─ HEALTHY: Neither constrained                                         │
+│                                                                             │
+│  4. Generate Explanation + Remediation                                      │
+│     └─ LLM explains classification with worker-specific guidance            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Classification Logic (Deterministic)
+
+```python
+class BottleneckClassification(str, Enum):
+    SERVER_LIMITED = "server_limited"
+    WORKER_LIMITED = "worker_limited"
+    MIXED = "mixed"
+    HEALTHY = "healthy"
+
+def classify_bottleneck(
+    primary: PrimarySignals,
+    worker: WorkerSignals
+) -> BottleneckClassification:
+    """
+    Classify whether bottleneck is server-side or worker-side.
+    This is DETERMINISTIC - no LLM involved.
+    """
+    server_stressed = (
+        primary.history.backlog_age_sec > 30 or
+        primary.persistence.latency_p95_ms > 100
+    )
+    
+    worker_stressed = (
+        worker.workflow_slots_available == 0 or
+        worker.activity_slots_available == 0 or
+        worker.wft_schedule_to_start_p95_ms > 50
+    )
+    
+    if server_stressed and worker_stressed:
+        return BottleneckClassification.MIXED
+    elif server_stressed:
+        return BottleneckClassification.SERVER_LIMITED
+    elif worker_stressed:
+        return BottleneckClassification.WORKER_LIMITED
+    else:
+        return BottleneckClassification.HEALTHY
+```
+
+### Worker Scaling Warnings (Deterministic Rules)
+
+These rules are encoded deterministically and NEVER violated:
+
+| Rule | Condition | Action | Rationale |
+|------|-----------|--------|-----------|
+| **NEVER_SCALE_DOWN_AT_ZERO** | `task_slots_available == 0` | Block scale-down | Scaling down worsens backlog |
+| **STICKY_QUEUE_WARNING** | Long-running workflows with updates | Warn about redistribution | New workers won't get sticky work |
+| **RESTART_TO_REDISTRIBUTE** | Sticky imbalance detected | Suggest rolling restart | Redistributes workflow state |
+| **POLLER_EXECUTOR_MISMATCH** | pollers > executor slots | Warn about misconfiguration | Pollers should not exceed slots |
+
+### Worker Remediation Guidance (RAG)
+
+The following remediation patterns are encoded in the RAG knowledge base:
+
+```yaml
+# docs/rag/worker_scaling.md
+topic: worker_scaling
+symptoms:
+  - temporal_worker_task_slots_available == 0
+  - schedule_to_start_latency > 50ms
+explanation: |
+  Worker stops polling when all executor slots are occupied.
+  Scaling down workers in this state worsens backlog.
+  Sticky queues prevent new workers from getting long-running workflow work.
+recommended_actions:
+  - Increase activity executor slots (MaxConcurrentActivityExecutionSize)
+  - Scale up workers
+  - Investigate blocking/zombie activities
+  - Consider restarting % of existing workers to redistribute sticky work
+warnings:
+  - NEVER scale down when task_slots_available == 0
+source: "Temporal Workers presentation (Tihomir Surdilovic, 2024)"
+```
+
+```yaml
+# docs/rag/sticky_cache_tuning.md
+topic: sticky_cache
+symptoms:
+  - temporal_sticky_cache_miss rate high
+  - workflow_task_replay_latency elevated
+explanation: |
+  Sticky cache stores workflow state to avoid replaying history.
+  Cache misses cause full history replay, increasing DB reads and latency.
+  Cache eviction under memory pressure amplifies this effect.
+recommended_actions:
+  - Increase MaxConcurrentWorkflowTaskExecutionSize (cache size)
+  - Monitor memory usage vs cache size
+  - Consider workflow design (smaller histories)
+thresholds:
+  - cache_hit_rate < 80%: investigate
+  - cache_hit_rate < 50%: critical
+source: "Temporal Workers presentation (Tihomir Surdilovic, 2024)"
+```
+
+```yaml
+# docs/rag/poller_configuration.md
+topic: poller_configuration
+symptoms:
+  - pollers > executor slots
+  - poll_success rate low
+explanation: |
+  "Makes no sense to configure more pollers than executor slots."
+  Excess pollers waste resources and don't improve throughput.
+  Pollers should be significantly less than executor slots.
+recommended_actions:
+  - Set MaxConcurrentWorkflowTaskPollers < MaxConcurrentWorkflowTaskExecutionSize
+  - Set MaxConcurrentActivityTaskPollers < MaxConcurrentActivityExecutionSize
+  - Typical ratio: pollers = 10-20% of executor slots
+source: "Temporal Workers presentation (Tihomir Surdilovic, 2024)"
+```
 
 ## Components and Interfaces
 

@@ -578,6 +578,287 @@
       }
     },
     {
+      "id": 40,
+      "type": "row",
+      "title": "Distributed Coordination",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 41,
+      "type": "stat",
+      "title": "Slot Blocks Owned",
+      "description": "Number of slot blocks owned by this service. Each block provides 100 connection slots.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "amp"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(dsql_slot_blocks_owned{service_name!=\"server\"}) or vector(0)"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "stat",
+      "title": "Slots Used",
+      "description": "Connection slots currently in use across all owned blocks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "amp"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(dsql_slot_blocks_slots_used{service_name!=\"server\"}) or vector(0)"
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "stat",
+      "title": "Slot Utilization",
+      "description": "Percentage of owned slots currently in use. Should be < 100%.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "amp"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 0.95
+              }
+            ]
+          },
+          "noValue": "N/A"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(dsql_slot_blocks_slots_used{service_name!=\"server\"}) / (sum(dsql_slot_blocks_owned{service_name!=\"server\"}) * 100) or vector(0)"
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "type": "stat",
+      "title": "Refiller In-Flight",
+      "description": "Concurrent Open() calls in the refiller. Limited by DSQL_RESERVOIR_INFLIGHT_LIMIT (default: 8).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "amp"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 6
+              },
+              {
+                "color": "red",
+                "value": 8
+              }
+            ]
+          },
+          "noValue": "0"
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(dsql_refiller_inflight{service_name!=\"server\"}) or vector(0)"
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Slot Block Usage Over Time",
+      "description": "Tracks slot block ownership and usage over time.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "amp"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "showPoints": "never"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(dsql_slot_blocks_owned{service_name!=\"server\"}) * 100",
+          "legendFormat": "total slots"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(dsql_slot_blocks_slots_used{service_name!=\"server\"})",
+          "legendFormat": "slots used"
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "type": "timeseries",
+      "title": "Refiller In-Flight Over Time",
+      "description": "Concurrent connection creation attempts. Spikes indicate burst activity.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "amp"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "showPoints": "never"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(dsql_refiller_inflight{service_name!=\"server\"})",
+          "legendFormat": "in-flight"
+        }
+      ]
+    },
+    {
       "id": 20,
       "type": "row",
       "title": "Persistence",
@@ -585,7 +866,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 41
       },
       "collapsed": false,
       "panels": []
@@ -598,7 +879,7 @@
         "h": 3,
         "w": 24,
         "x": 0,
-        "y": 31
+        "y": 42
       },
       "options": {
         "mode": "markdown",
@@ -617,7 +898,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 34
+        "y": 45
       },
       "fieldConfig": {
         "defaults": {
@@ -657,7 +938,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 34
+        "y": 45
       },
       "fieldConfig": {
         "defaults": {
@@ -696,7 +977,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
@@ -727,7 +1008,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 59
       },
       "collapsed": true,
       "panels": [
@@ -937,7 +1218,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 68
       },
       "collapsed": true,
       "panels": [

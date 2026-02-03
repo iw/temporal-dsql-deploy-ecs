@@ -40,33 +40,33 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - Implement `copilot db list-tables` CLI command
     - _Requirements: 5.1, 5.4, 11.2_
 
-- [ ] 2. Checkpoint - Verify infrastructure foundation
+- [x] 2. Checkpoint - Verify infrastructure foundation
   - Ensure Terraform validates successfully
   - Ensure CLI commands work with DSQL
   - Ask the user if questions arise
 
-- [ ] 3. Bedrock Knowledge Base Setup
-  - [ ] 3.1 Create S3 buckets for knowledge base
+- [x] 3. Bedrock Knowledge Base Setup
+  - [x] 3.1 Create S3 buckets for knowledge base
     - S3 bucket for source documents (versioning enabled)
     - S3 bucket for vector storage
     - Configure bucket policies for Bedrock access
     - _Requirements: 3.1_
 
-  - [ ] 3.2 Create Bedrock Knowledge Base (manual or future Terraform)
+  - [x] 3.2 Create Bedrock Knowledge Base (manual or future Terraform)
     - Create knowledge base with Titan Embeddings V2
     - Configure S3 Vectors as storage backend
     - Create S3 data source pointing to source bucket
     - _Requirements: 3.1, 3.2_
 
-  - [ ] 3.3 Implement knowledge base CLI commands
+  - [x] 3.3 Implement knowledge base CLI commands
     - Implement `copilot kb sync` to upload docs to S3
     - Implement `copilot kb start-ingestion` to trigger KB ingestion
     - Implement `copilot kb status` to check KB/job status
     - Implement `copilot kb list-jobs` to list recent ingestion jobs
     - _Requirements: 3.5, 11.3_
 
-- [ ] 4. Pydantic Models and Core Types
-  - [ ] 4.1 Create health state machine and signal models
+- [x] 4. Pydantic Models and Core Types
+  - [x] 4.1 Create health state machine and signal models
     - Define `HealthState` enum (happy, stressed, critical)
     - Define `PrimarySignals` model (forward progress indicators)
     - Define `AmplifierSignals` model (explain why)
@@ -74,7 +74,7 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - Define `Signals` model combining all signal types
     - _Requirements: 1.2, 12.1_
 
-  - [ ] 4.2 Create health assessment models
+  - [x] 4.2 Create health assessment models
     - Define `Severity` enum (warning, critical)
     - Define `ActionType` enum (scale, restart, configure, alert)
     - Define `SuggestedAction`, `Issue`, `HealthAssessment` models
@@ -85,14 +85,14 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - **Property 6: Health Assessment Structure Round-Trip**
     - **Validates: Requirements 4.3**
 
-  - [ ] 4.4 Create configuration models
+  - [x] 4.4 Create configuration models
     - Define threshold configuration for primary signals
     - Define pressure thresholds for amplifier signals
     - Define error pattern configuration for narrative signals
     - Define environment variable parsing
     - _Requirements: 1.3, 1.4, 2.2_
 
-  - [ ] 4.5 Implement Health State Machine
+  - [x] 4.5 Implement Health State Machine
     - Implement `evaluate_health_state()` function
     - Ensure deterministic evaluation (no LLM)
     - Implement state transition rules (Happy → Stressed → Critical)
@@ -105,8 +105,66 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - Test no direct Happy → Critical transition
     - **Validates: Requirements 12.2, 12.3**
 
-- [ ] 5. Activities Implementation
-  - [ ] 5.1 Implement AMP signal fetching activity
+- [x] 4.7 Review and expand signals from benchmark findings
+  - Review Grafana dashboards from benchmark runs (Server Health, DSQL Persistence, Workers)
+  - Identify additional primary signals (forward progress indicators)
+  - Identify additional amplifier signals (resource pressure, contention)
+  - Identify additional narrative patterns (log patterns from benchmark stress)
+  - Document PromQL queries for each signal
+  - Update `PrimarySignals`, `AmplifierSignals` models with new fields
+  - Update `NarrativePatterns` config with new log patterns
+  - Update design.md Signal Taxonomy tables
+  - _Requirements: 1.2, 1.3, 1.4, 2.2_
+
+- [-] 4.8 Implement Worker Health Model
+  - [x] 4.8.1 Create WorkerSignals model
+    - Define `WorkerSignals` model with schedule-to-start latencies
+    - Add workflow/activity slots available fields
+    - Add poller count fields
+    - Define thresholds (50ms WFT schedule-to-start, 0 slots = critical)
+    - _Requirements: 14.1, 14.4_
+
+  - [x] 4.8.2 Create WorkerAmplifiers model
+    - Define `WorkerCacheAmplifiers` (sticky cache size, hit/miss rate)
+    - Define `WorkerPollAmplifiers` (long poll latency, failures)
+    - Add poller/executor mismatch detection
+    - _Requirements: 14.6_
+
+  - [x] 4.8.3 Implement BottleneckClassification
+    - Define `BottleneckClassification` enum (server_limited, worker_limited, mixed, healthy)
+    - Implement `classify_bottleneck()` function
+    - Ensure deterministic classification (no LLM)
+    - _Requirements: 14.2, 14.3_
+
+  - [x] 4.8.4 Implement worker scaling rules
+    - Implement NEVER_SCALE_DOWN_AT_ZERO rule
+    - Implement STICKY_QUEUE_WARNING rule
+    - Implement RESTART_TO_REDISTRIBUTE suggestion
+    - Implement POLLER_EXECUTOR_MISMATCH warning
+    - _Requirements: 14.5_
+
+  - [x] 4.8.5 Add worker signal queries to AMP activity
+    - Add PromQL queries for worker SDK metrics
+    - Query `temporal_workflow_task_schedule_to_start_latency`
+    - Query `temporal_worker_task_slots_available`
+    - Query `temporal_num_pollers`
+    - Query sticky cache metrics
+    - _Requirements: 14.1_
+
+  - [x] 4.8.6 Create worker remediation RAG documents
+    - Create `docs/rag/worker_scaling.md`
+    - Create `docs/rag/sticky_cache_tuning.md`
+    - Create `docs/rag/poller_configuration.md`
+    - _Requirements: 14.7_
+
+  - [ ]* 4.8.7 Write property test for bottleneck classification
+    - **Property 14: Bottleneck Classification Correctness**
+    - Test server-limited vs worker-limited classification
+    - Test NEVER_SCALE_DOWN_AT_ZERO rule
+    - **Validates: Requirements 14.2, 14.5**
+
+- [x] 5. Activities Implementation
+  - [x] 5.1 Implement AMP signal fetching activity
     - Create `fetch_signals_from_amp` activity
     - Query primary signals (state transitions, completions, backlog age)
     - Query amplifier signals (DSQL latency, OCC conflicts, pool utilization)
@@ -119,7 +177,7 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - Verify amplifiers explain resource pressure
     - **Validates: Requirements 1.2, 1.3**
 
-  - [ ] 5.3 Implement Loki log querying activity
+  - [x] 5.3 Implement Loki log querying activity
     - Create `query_loki_errors` activity
     - Query for narrative signal patterns (service errors, DSQL errors, ringpop, shard events)
     - Parse Loki response format
@@ -129,7 +187,7 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - **Property 3: Log Pattern Detection**
     - **Validates: Requirements 2.2, 2.3**
 
-  - [ ] 5.5 Implement RAG context retrieval activity
+  - [x] 5.5 Implement RAG context retrieval activity
     - Create `fetch_rag_context` activity
     - Use Bedrock Knowledge Base retrieve API
     - Limit to 5 results
@@ -140,7 +198,7 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - **Property 5: RAG Semantic Retrieval**
     - **Validates: Requirements 3.2, 3.3, 3.4**
 
-  - [ ] 5.7 Implement state store activities
+  - [x] 5.7 Implement state store activities
     - Create `store_health_assessment` activity
     - Create `store_signals_snapshot` activity
     - Create `get_latest_assessment` activity
@@ -151,24 +209,33 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - **Property 8: State Store Round-Trip**
     - **Validates: Requirements 5.2, 5.4**
 
-- [ ] 6. Checkpoint - Verify activities
+- [x] 6. Checkpoint - Verify activities
   - Ensure all activities can be imported
   - Run property tests
   - Ask the user if questions arise
 
+- [x] 6.1 Migrate to `whenever` for date/time handling
+  - Add `whenever` dependency to pyproject.toml
+  - Update `Signals` model to use `Instant` instead of `datetime`
+  - Update `HealthAssessment` model to use `Instant`
+  - Update activities to use `Instant` and `TimeDelta`
+  - Update state store activities for DSQL `TIMESTAMPTZ` conversion
+  - Ensure all JSON serialization uses ISO 8601 format
+  - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6_
+
 
 - [ ] 7. Pydantic AI Agents
-  - [ ] 7.1 Implement dispatcher agent
+  - [x] 7.1 Implement dispatcher agent
     - Define `NoExplanationNeeded`, `QuickExplanation`, `NeedsDeepExplanation` output types
     - Create dispatcher agent with Claude Sonnet 4.5
     - Configure instructions emphasizing "health state already decided"
     - Agent decides explanation depth, NOT health state
     - _Requirements: 4.3, 4.4_
 
-  - [ ] 7.2 Implement researcher agent
+  - [x] 7.2 Implement researcher agent
     - Create researcher agent with Claude Opus 4.5
     - Configure instructions emphasizing "explain, don't decide"
-    - Set `HealthAssessment` as result type
+    - Set `HealthAssessment` as output type
     - Ensure agent cannot change `health_state` field
     - _Requirements: 4.4, 4.5, 4.6_
 
@@ -179,7 +246,7 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - **Validates: Requirements 4.5, 4.9**
 
 - [ ] 8. Temporal Workflows
-  - [ ] 8.1 Implement ObserveClusterWorkflow
+  - [x] 8.1 Implement ObserveClusterWorkflow
     - Create continuous workflow with 30-second sleep
     - Fetch signals, evaluate health state (deterministic)
     - Trigger AssessHealthWorkflow on state change
@@ -190,13 +257,13 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - **Property 2: Sliding Window Invariant**
     - **Validates: Requirements 1.6**
 
-  - [ ] 8.3 Implement LogWatcherWorkflow
+  - [x] 8.3 Implement LogWatcherWorkflow
     - Create continuous workflow with 30-second sleep
     - Query Loki, detect narrative signal patterns
     - Store patterns for correlation
     - _Requirements: 2.1, 2.2_
 
-  - [ ] 8.4 Implement AssessHealthWorkflow
+  - [x] 8.4 Implement AssessHealthWorkflow
     - Create workflow with dispatcher → researcher pattern
     - Receive health_state (already decided by rules)
     - Fetch RAG context, log patterns, signal history
@@ -208,7 +275,7 @@ The Copilot is implemented in a separate workspace (`temporal-sre-copilot/`) wit
     - **Property 4: Log-Signal Correlation**
     - **Validates: Requirements 2.5**
 
-  - [ ] 8.6 Implement ScheduledAssessmentWorkflow
+  - [x] 8.6 Implement ScheduledAssessmentWorkflow
     - Create workflow with 5-minute sleep
     - Check for recent assessment to avoid duplicates
     - Evaluate health state and trigger assessment if needed

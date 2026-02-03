@@ -82,9 +82,146 @@ locals {
   conn_lease_env_vars = var.dsql_distributed_conn_lease_enabled ? [
     { name = "DSQL_DISTRIBUTED_CONN_LEASE_ENABLED", value = "true" },
     { name = "DSQL_DISTRIBUTED_CONN_LEASE_TABLE", value = var.dsql_conn_lease_table },
-    { name = "DSQL_DISTRIBUTED_CONN_LIMIT", value = tostring(var.dsql_distributed_conn_limit) }
+    { name = "DSQL_DISTRIBUTED_CONN_LIMIT", value = tostring(var.dsql_distributed_conn_limit) },
+    { name = "CLUSTER_ENDPOINT", value = var.dsql_endpoint }
   ] : []
+
+  # Common environment variables for all services
+  common_env_vars = concat([
+    # Service identification
+    { name = "SERVICES", value = var.service_type },
+
+    # Environment for dynamic config selection
+    { name = "DEPLOY_ENVIRONMENT", value = var.environment_name },
+
+    # DSQL Configuration (IAM Auth - no password needed)
+    { name = "TEMPORAL_SQL_HOST", value = var.dsql_endpoint },
+    { name = "TEMPORAL_SQL_PORT", value = "5432" },
+    { name = "TEMPORAL_SQL_USER", value = "admin" },
+    { name = "TEMPORAL_SQL_DATABASE", value = "postgres" },
+    { name = "TEMPORAL_SQL_PLUGIN", value = "dsql" },
+    { name = "TEMPORAL_SQL_PLUGIN_NAME", value = "dsql" },
+    { name = "TEMPORAL_SQL_TLS_ENABLED", value = "true" },
+    { name = "TEMPORAL_SQL_IAM_AUTH", value = "true" },
+
+    # DSQL Connection Pool Settings
+    { name = "TEMPORAL_SQL_MAX_CONNS", value = tostring(var.dsql_max_conns) },
+    { name = "TEMPORAL_SQL_MAX_IDLE_CONNS", value = tostring(var.dsql_max_idle_conns) },
+    { name = "TEMPORAL_SQL_CONNECTION_TIMEOUT", value = "30s" },
+    { name = "TEMPORAL_SQL_MAX_CONN_LIFETIME", value = "55m" },
+
+    # DSQL Connection Rate Limiting (local fallback)
+    { name = "DSQL_CONNECTION_RATE_LIMIT", value = "10" },
+    { name = "DSQL_CONNECTION_BURST_LIMIT", value = "50" },
+
+    # DSQL Distributed Rate Limiter (DynamoDB-backed)
+    { name = "DSQL_DISTRIBUTED_RATE_LIMITER_ENABLED", value = "true" },
+    { name = "DSQL_DISTRIBUTED_RATE_LIMITER_TABLE", value = var.dsql_rate_limiter_table },
+    { name = "DSQL_DISTRIBUTED_RATE_LIMITER_LIMIT", value = "100" },
+
+    # OpenSearch Configuration (AWS Managed)
+    { name = "TEMPORAL_ELASTICSEARCH_HOST", value = var.opensearch_endpoint },
+    { name = "TEMPORAL_ELASTICSEARCH_PORT", value = "443" },
+    { name = "TEMPORAL_ELASTICSEARCH_SCHEME", value = "https" },
+    { name = "TEMPORAL_ELASTICSEARCH_VERSION", value = "v8" },
+    { name = "TEMPORAL_ELASTICSEARCH_INDEX", value = var.opensearch_visibility_index },
+
+    # AWS Configuration for DSQL IAM auth and OpenSearch SigV4
+    { name = "AWS_EC2_METADATA_DISABLED", value = "true" },
+    { name = "AWS_REGION", value = var.region },
+    { name = "TEMPORAL_SQL_AWS_REGION", value = var.region },
+
+    # Persistence template location (baked into image)
+    { name = "TEMPORAL_PERSISTENCE_TEMPLATE", value = "/etc/temporal/config/persistence-dsql-opensearch.template.yaml" },
+
+    # Temporal Configuration
+    { name = "TEMPORAL_LOG_LEVEL", value = var.log_level },
+    { name = "TEMPORAL_HISTORY_SHARDS", value = tostring(var.history_shards) },
+
+    # Prometheus metrics endpoint
+    { name = "PROMETHEUS_ENDPOINT", value = "0.0.0.0:${local.metrics_port}" }
+  ], local.reservoir_env_vars, local.conn_lease_env_vars)
+
+  # Wait-for-frontend init container (only for worker service)
+  wait_for_frontend_container = {
+    name      = "wait-for-frontend"
+    image     = "public.ecr.aws/docker/library/busybox:latest"
+    essential = false
+    cpu       = 64
+    memory    = 64
+    command   = ["sh", "-c", "echo 'Waiting for temporal-frontend:7233...'; until nc -z temporal-frontend 7233; do echo 'Frontend not ready, retrying in 2s...'; sleep 2; done; echo 'Frontend is ready!'"]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = "/ecs/${var.project_name}/wait-for-frontend"
+        "awslogs-region"        = var.region
+        "awslogs-stream-prefix" = "worker"
+        "awslogs-create-group"  = "true"
+      }
+    }
+  }
+
+  # Main container definition (common to all services)
+  main_container_base = {
+    name      = local.container_name
+    image     = var.image
+    essential = true
+    cpu       = local.main_cpu
+    memory    = local.main_memory
+
+    portMappings = [
+      {
+        containerPort = local.grpc_port
+        protocol      = "tcp"
+        name          = "grpc"
+      },
+      {
+        containerPort = local.membership_port
+        protocol      = "tcp"
+        name          = "membership"
+      },
+      {
+        containerPort = local.metrics_port
+        protocol      = "tcp"
+        name          = "metrics"
+      }
+    ]
+
+    environment = local.common_env_vars
+
+    linuxParameters = {
+      initProcessEnabled = true
+    }
+
+    healthCheck = local.health_check
+  }
+
+  # Main container for worker (with dependsOn for wait-for-frontend)
+  worker_main_container = merge(local.main_container_base, {
+    dependsOn = [
+      {
+        containerName = "wait-for-frontend"
+        condition     = "SUCCESS"
+      }
+    ]
+  })
+
+  # Container definitions for worker service (includes wait-for-frontend)
+  worker_container_defs = [
+    local.worker_main_container,
+    local.wait_for_frontend_container,
+    var.alloy_init_container,
+    var.alloy_sidecar_container
+  ]
+
+  # Container definitions for non-worker services
+  non_worker_container_defs = [
+    local.main_container_base,
+    var.alloy_init_container,
+    var.alloy_sidecar_container
+  ]
 }
+
 
 # -----------------------------------------------------------------------------
 # Task Definition
@@ -117,101 +254,8 @@ resource "aws_ecs_task_definition" "service" {
     name = "alloy-config"
   }
 
-  container_definitions = jsonencode([
-    {
-      name      = local.container_name
-      image     = var.image
-      essential = true
-      cpu       = local.main_cpu
-      memory    = local.main_memory
-
-      portMappings = [
-        {
-          containerPort = local.grpc_port
-          protocol      = "tcp"
-          name          = "grpc"
-        },
-        {
-          containerPort = local.membership_port
-          protocol      = "tcp"
-          name          = "membership"
-        },
-        {
-          containerPort = local.metrics_port
-          protocol      = "tcp"
-          name          = "metrics"
-        }
-      ]
-
-      environment = concat([
-        # Service identification
-        { name = "SERVICES", value = var.service_type },
-
-        # Environment for dynamic config selection
-        # Note: Use DEPLOY_ENVIRONMENT instead of TEMPORAL_ENVIRONMENT to avoid conflict
-        # with temporal-server CLI which interprets TEMPORAL_ENVIRONMENT as --env flag
-        { name = "DEPLOY_ENVIRONMENT", value = var.environment_name },
-
-        # DSQL Configuration (IAM Auth - no password needed)
-        { name = "TEMPORAL_SQL_HOST", value = var.dsql_endpoint },
-        { name = "TEMPORAL_SQL_PORT", value = "5432" },
-        { name = "TEMPORAL_SQL_USER", value = "admin" },
-        { name = "TEMPORAL_SQL_DATABASE", value = "postgres" },
-        { name = "TEMPORAL_SQL_PLUGIN", value = "dsql" },
-        { name = "TEMPORAL_SQL_PLUGIN_NAME", value = "dsql" },
-        { name = "TEMPORAL_SQL_TLS_ENABLED", value = "true" },
-        { name = "TEMPORAL_SQL_IAM_AUTH", value = "true" },
-
-        # DSQL Connection Pool Settings
-        { name = "TEMPORAL_SQL_MAX_CONNS", value = tostring(var.dsql_max_conns) },
-        { name = "TEMPORAL_SQL_MAX_IDLE_CONNS", value = tostring(var.dsql_max_idle_conns) },
-        { name = "TEMPORAL_SQL_CONNECTION_TIMEOUT", value = "30s" },
-        { name = "TEMPORAL_SQL_MAX_CONN_LIFETIME", value = "55m" },
-
-        # DSQL Connection Rate Limiting
-        { name = "DSQL_CONNECTION_RATE_LIMIT", value = tostring(var.dsql_connection_rate_limit) },
-        { name = "DSQL_CONNECTION_BURST_LIMIT", value = tostring(var.dsql_connection_burst_limit) },
-
-        # DSQL Distributed Rate Limiter (DynamoDB-backed)
-        { name = "DSQL_DISTRIBUTED_RATE_LIMITER_ENABLED", value = "true" },
-        { name = "DSQL_DISTRIBUTED_RATE_LIMITER_TABLE", value = var.dsql_rate_limiter_table },
-        { name = "DSQL_DISTRIBUTED_RATE_LIMITER_LIMIT", value = "100" },
-
-        # OpenSearch Configuration (AWS Managed)
-        { name = "TEMPORAL_ELASTICSEARCH_HOST", value = var.opensearch_endpoint },
-        { name = "TEMPORAL_ELASTICSEARCH_PORT", value = "443" },
-        { name = "TEMPORAL_ELASTICSEARCH_SCHEME", value = "https" },
-        { name = "TEMPORAL_ELASTICSEARCH_VERSION", value = "v8" },
-        { name = "TEMPORAL_ELASTICSEARCH_INDEX", value = var.opensearch_visibility_index },
-
-        # AWS Configuration for DSQL IAM auth and OpenSearch SigV4
-        { name = "AWS_EC2_METADATA_DISABLED", value = "true" },
-        { name = "AWS_REGION", value = var.region },
-        { name = "TEMPORAL_SQL_AWS_REGION", value = var.region },
-
-        # Persistence template location (baked into image)
-        { name = "TEMPORAL_PERSISTENCE_TEMPLATE", value = "/etc/temporal/config/persistence-dsql-opensearch.template.yaml" },
-
-        # Temporal Configuration
-        { name = "TEMPORAL_LOG_LEVEL", value = var.log_level },
-        { name = "TEMPORAL_HISTORY_SHARDS", value = tostring(var.history_shards) },
-
-        # Prometheus metrics endpoint
-        { name = "PROMETHEUS_ENDPOINT", value = "0.0.0.0:${local.metrics_port}" }
-      ], local.reservoir_env_vars, local.conn_lease_env_vars)
-
-      # No log configuration - logs collected by Alloy sidecar
-
-      linuxParameters = {
-        initProcessEnabled = true
-      }
-
-      # Health check only for frontend service
-      healthCheck = local.health_check
-    },
-    var.alloy_init_container,
-    var.alloy_sidecar_container
-  ])
+  # Worker gets wait-for-frontend init container, others don't
+  container_definitions = var.service_type == "worker" ? jsonencode(local.worker_container_defs) : jsonencode(local.non_worker_container_defs)
 
   tags = {
     Name    = "${var.project_name}-${local.service_name}"
@@ -290,6 +334,12 @@ resource "aws_ecs_service" "service" {
   depends_on = [
     aws_ecs_task_definition.service
   ]
+
+  # Ignore desired_count changes - scaling is managed via CLI/scripts, not Terraform
+  # This allows scale-services.sh and staggered-startup.sh to work without Terraform reverting
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
 
   tags = {
     Name    = "${var.project_name}-${local.service_name}"

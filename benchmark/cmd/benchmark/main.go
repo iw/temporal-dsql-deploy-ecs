@@ -95,8 +95,8 @@ func run(ctx context.Context) error {
 	slog.Info("Connecting to Temporal", "address", cfg.TemporalAddress)
 
 	var temporalClient client.Client
-	maxRetries := 30
-	retryDelay := 2 * time.Second
+	maxRetries := 60
+	retryDelay := 5 * time.Second
 
 	for i := 0; i < maxRetries; i++ {
 		// Check for cancellation before each retry
@@ -129,6 +129,8 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to Temporal cluster at %s after %d attempts: %w", cfg.TemporalAddress, maxRetries, err)
 	}
 	defer temporalClient.Close()
+
+	slog.Info("Connected to Temporal successfully", "address", cfg.TemporalAddress)
 
 	// Verify cluster health by checking system info
 	slog.Info("Verifying Temporal cluster health")
@@ -226,18 +228,32 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClie
 	}
 	defer nsClient.Close()
 
-	// Create worker with high-throughput settings
-	// Increased pollers from 16 to 32 to address workflow task processing bottleneck
-	// observed in 6k st/s benchmark (server adding ~350 tasks/sec but only ~70/sec processed)
+	// Create worker with high-throughput settings optimized for state-transitions workflow
+	//
+	// Key optimizations based on 400 WPS benchmark investigation:
+	// 1. Reduced activity pollers (4 vs 32) - eager activities bypass activity queue
+	// 2. Reduced sticky timeout (2s vs 5s) - faster fallback to non-sticky queue
+	// 3. High workflow task pollers (32) - maximize non-sticky queue throughput
+	//
+	// The state-transitions workflow uses eager activities, so most activity pollers
+	// are wasted. By reducing them, we free up resources for workflow task processing.
 	workerOptions := worker.Options{
-		MaxConcurrentActivityExecutionSize:      200,
+		// Execution slots - high for throughput
 		MaxConcurrentWorkflowTaskExecutionSize:  200,
+		MaxConcurrentActivityExecutionSize:      50, // Reduced - eager activities don't need many
 		MaxConcurrentLocalActivityExecutionSize: 200,
-		MaxConcurrentWorkflowTaskPollers:        32,
-		MaxConcurrentActivityTaskPollers:        32,
+
+		// Pollers - optimized for workflow-heavy workloads
+		MaxConcurrentWorkflowTaskPollers: 32,
+		MaxConcurrentActivityTaskPollers: 4, // Reduced from 32 - eager activities bypass queue
+
+		// Eager execution - enabled for latency optimization
 		DisableEagerActivities:                  false,
 		MaxConcurrentEagerActivityExecutionSize: 100,
-		StickyScheduleToStartTimeout:            5 * time.Second,
+
+		// Sticky execution - reduced timeout for faster fallback to non-sticky queue
+		// Short-lived workflows (like state-transitions) don't benefit much from sticky caching
+		StickyScheduleToStartTimeout: 2 * time.Second, // Reduced from 5s
 	}
 
 	w := worker.New(nsClient, runner.DefaultTaskQueue, workerOptions)

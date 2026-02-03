@@ -154,7 +154,6 @@ module "observability" {
   execution_role_arn            = module.iam.execution_role_arn
   grafana_task_role_arn         = module.iam.grafana_task_role_arn
   loki_task_role_arn            = module.iam.loki_task_role_arn
-  loki_enabled                  = var.loki_enabled
   grafana_image                 = var.grafana_image
   grafana_cpu                   = var.grafana_cpu
   grafana_memory                = var.grafana_memory
@@ -187,7 +186,6 @@ module "iam" {
   conn_lease_table_arn     = module.dynamodb.conn_lease_table_arn
   conn_lease_enabled       = var.dsql_distributed_conn_lease_enabled
   grafana_admin_secret_arn = data.aws_secretsmanager_secret.grafana_admin.arn
-  loki_enabled             = var.loki_enabled
   loki_s3_bucket_arn       = module.observability.loki_s3_bucket_arn
 }
 
@@ -207,7 +205,6 @@ module "iam" {
 # -----------------------------------------------------------------------------
 module "alloy_history" {
   source = "../../modules/alloy-sidecar"
-  count  = var.loki_enabled ? 1 : 0
 
   project_name                     = var.project_name
   service_name                     = "history"
@@ -215,7 +212,6 @@ module "alloy_history" {
   loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
   region                           = var.region
   alloy_image                      = var.alloy_image
-  log_group_name                   = "/ecs/${var.project_name}/temporal-history"
 }
 
 # -----------------------------------------------------------------------------
@@ -223,7 +219,6 @@ module "alloy_history" {
 # -----------------------------------------------------------------------------
 module "alloy_matching" {
   source = "../../modules/alloy-sidecar"
-  count  = var.loki_enabled ? 1 : 0
 
   project_name                     = var.project_name
   service_name                     = "matching"
@@ -231,7 +226,6 @@ module "alloy_matching" {
   loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
   region                           = var.region
   alloy_image                      = var.alloy_image
-  log_group_name                   = "/ecs/${var.project_name}/temporal-matching"
 }
 
 # -----------------------------------------------------------------------------
@@ -239,7 +233,6 @@ module "alloy_matching" {
 # -----------------------------------------------------------------------------
 module "alloy_frontend" {
   source = "../../modules/alloy-sidecar"
-  count  = var.loki_enabled ? 1 : 0
 
   project_name                     = var.project_name
   service_name                     = "frontend"
@@ -247,7 +240,6 @@ module "alloy_frontend" {
   loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
   region                           = var.region
   alloy_image                      = var.alloy_image
-  log_group_name                   = "/ecs/${var.project_name}/temporal-frontend"
 }
 
 # -----------------------------------------------------------------------------
@@ -255,7 +247,6 @@ module "alloy_frontend" {
 # -----------------------------------------------------------------------------
 module "alloy_worker" {
   source = "../../modules/alloy-sidecar"
-  count  = var.loki_enabled ? 1 : 0
 
   project_name                     = var.project_name
   service_name                     = "worker"
@@ -263,7 +254,6 @@ module "alloy_worker" {
   loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
   region                           = var.region
   alloy_image                      = var.alloy_image
-  log_group_name                   = "/ecs/${var.project_name}/temporal-worker"
 }
 
 
@@ -301,16 +291,19 @@ module "temporal_history" {
   opensearch_visibility_index   = var.opensearch_visibility_index
   history_shards                = var.temporal_history_shards
   log_retention_days            = var.log_retention_days
-  loki_enabled                  = var.loki_enabled
-  alloy_init_container          = var.loki_enabled ? module.alloy_history[0].init_container_definition : null
-  alloy_sidecar_container       = var.loki_enabled ? module.alloy_history[0].sidecar_container_definition : null
+  alloy_init_container          = module.alloy_history.init_container_definition
+  alloy_sidecar_container       = module.alloy_history.sidecar_container_definition
 
   # DSQL Connection Reservoir Configuration (Requirements: 17.5)
   dsql_reservoir_enabled         = var.dsql_reservoir_enabled
-  dsql_reservoir_target_ready    = var.dsql_reservoir_target_ready
+  dsql_reservoir_target_ready    = var.dsql_history_max_conns
   dsql_reservoir_base_lifetime   = var.dsql_reservoir_base_lifetime
   dsql_reservoir_lifetime_jitter = var.dsql_reservoir_lifetime_jitter
   dsql_reservoir_guard_window    = var.dsql_reservoir_guard_window
+
+  # DSQL Connection Pool Configuration (800 WPS: 300 conns × 16 replicas = 4,800)
+  dsql_max_conns      = var.dsql_history_max_conns
+  dsql_max_idle_conns = var.dsql_history_max_conns
 
   # DSQL Distributed Connection Leasing Configuration (Requirements: 17.5)
   dsql_distributed_conn_lease_enabled = var.dsql_distributed_conn_lease_enabled
@@ -351,16 +344,19 @@ module "temporal_matching" {
   opensearch_visibility_index   = var.opensearch_visibility_index
   history_shards                = var.temporal_history_shards
   log_retention_days            = var.log_retention_days
-  loki_enabled                  = var.loki_enabled
-  alloy_init_container          = var.loki_enabled ? module.alloy_matching[0].init_container_definition : null
-  alloy_sidecar_container       = var.loki_enabled ? module.alloy_matching[0].sidecar_container_definition : null
+  alloy_init_container          = module.alloy_matching.init_container_definition
+  alloy_sidecar_container       = module.alloy_matching.sidecar_container_definition
 
   # DSQL Connection Reservoir Configuration (Requirements: 17.5)
   dsql_reservoir_enabled         = var.dsql_reservoir_enabled
-  dsql_reservoir_target_ready    = var.dsql_reservoir_target_ready
+  dsql_reservoir_target_ready    = var.dsql_matching_max_conns
   dsql_reservoir_base_lifetime   = var.dsql_reservoir_base_lifetime
   dsql_reservoir_lifetime_jitter = var.dsql_reservoir_lifetime_jitter
   dsql_reservoir_guard_window    = var.dsql_reservoir_guard_window
+
+  # DSQL Connection Pool Configuration (800 WPS: 150 conns × 16 replicas = 2,400)
+  dsql_max_conns      = var.dsql_matching_max_conns
+  dsql_max_idle_conns = var.dsql_matching_max_conns
 
   # DSQL Distributed Connection Leasing Configuration (Requirements: 17.5)
   dsql_distributed_conn_lease_enabled = var.dsql_distributed_conn_lease_enabled
@@ -402,16 +398,19 @@ module "temporal_frontend" {
   opensearch_visibility_index   = var.opensearch_visibility_index
   history_shards                = var.temporal_history_shards
   log_retention_days            = var.log_retention_days
-  loki_enabled                  = var.loki_enabled
-  alloy_init_container          = var.loki_enabled ? module.alloy_frontend[0].init_container_definition : null
-  alloy_sidecar_container       = var.loki_enabled ? module.alloy_frontend[0].sidecar_container_definition : null
+  alloy_init_container          = module.alloy_frontend.init_container_definition
+  alloy_sidecar_container       = module.alloy_frontend.sidecar_container_definition
 
   # DSQL Connection Reservoir Configuration (Requirements: 17.5)
   dsql_reservoir_enabled         = var.dsql_reservoir_enabled
-  dsql_reservoir_target_ready    = var.dsql_reservoir_target_ready
+  dsql_reservoir_target_ready    = var.dsql_frontend_max_conns
   dsql_reservoir_base_lifetime   = var.dsql_reservoir_base_lifetime
   dsql_reservoir_lifetime_jitter = var.dsql_reservoir_lifetime_jitter
   dsql_reservoir_guard_window    = var.dsql_reservoir_guard_window
+
+  # DSQL Connection Pool Configuration (800 WPS: 100 conns × 9 replicas = 900)
+  dsql_max_conns      = var.dsql_frontend_max_conns
+  dsql_max_idle_conns = var.dsql_frontend_max_conns
 
   # DSQL Distributed Connection Leasing Configuration (Requirements: 17.5)
   dsql_distributed_conn_lease_enabled = var.dsql_distributed_conn_lease_enabled
@@ -452,16 +451,19 @@ module "temporal_worker" {
   opensearch_visibility_index   = var.opensearch_visibility_index
   history_shards                = var.temporal_history_shards
   log_retention_days            = var.log_retention_days
-  loki_enabled                  = var.loki_enabled
-  alloy_init_container          = var.loki_enabled ? module.alloy_worker[0].init_container_definition : null
-  alloy_sidecar_container       = var.loki_enabled ? module.alloy_worker[0].sidecar_container_definition : null
+  alloy_init_container          = module.alloy_worker.init_container_definition
+  alloy_sidecar_container       = module.alloy_worker.sidecar_container_definition
 
   # DSQL Connection Reservoir Configuration (Requirements: 17.5)
   dsql_reservoir_enabled         = var.dsql_reservoir_enabled
-  dsql_reservoir_target_ready    = var.dsql_reservoir_target_ready
+  dsql_reservoir_target_ready    = var.dsql_worker_max_conns
   dsql_reservoir_base_lifetime   = var.dsql_reservoir_base_lifetime
   dsql_reservoir_lifetime_jitter = var.dsql_reservoir_lifetime_jitter
   dsql_reservoir_guard_window    = var.dsql_reservoir_guard_window
+
+  # DSQL Connection Pool Configuration (800 WPS: 50 conns × 3 replicas = 150)
+  dsql_max_conns      = var.dsql_worker_max_conns
+  dsql_max_idle_conns = var.dsql_worker_max_conns
 
   # DSQL Distributed Connection Leasing Configuration (Requirements: 17.5)
   dsql_distributed_conn_lease_enabled = var.dsql_distributed_conn_lease_enabled
@@ -472,6 +474,19 @@ module "temporal_worker" {
   depends_on = [module.observability]
 }
 
+# -----------------------------------------------------------------------------
+# Alloy Sidecar for Temporal UI
+# -----------------------------------------------------------------------------
+module "alloy_ui" {
+  source = "../../modules/alloy-sidecar"
+
+  project_name                     = var.project_name
+  service_name                     = "temporal-ui"
+  prometheus_remote_write_endpoint = module.observability.prometheus_remote_write_endpoint
+  loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
+  region                           = var.region
+  alloy_image                      = var.alloy_image
+}
 
 # -----------------------------------------------------------------------------
 # Temporal UI Service
@@ -496,6 +511,8 @@ module "temporal_ui" {
   memory                        = var.temporal_ui_memory
   desired_count                 = var.temporal_ui_count
   log_retention_days            = var.log_retention_days
+  alloy_init_container          = module.alloy_ui.init_container_definition
+  alloy_sidecar_container       = module.alloy_ui.sidecar_container_definition
 }
 
 # =============================================================================
@@ -509,7 +526,7 @@ module "temporal_ui" {
 # -----------------------------------------------------------------------------
 module "alloy_benchmark" {
   source = "../../modules/alloy-sidecar"
-  count  = var.benchmark_enabled && var.loki_enabled ? 1 : 0
+  count  = var.benchmark_enabled ? 1 : 0
 
   project_name                     = var.project_name
   service_name                     = "benchmark"
@@ -517,7 +534,6 @@ module "alloy_benchmark" {
   loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
   region                           = var.region
   alloy_image                      = var.alloy_image
-  log_group_name                   = "/ecs/${var.project_name}/benchmark"
 }
 
 # -----------------------------------------------------------------------------
@@ -525,7 +541,7 @@ module "alloy_benchmark" {
 # -----------------------------------------------------------------------------
 module "alloy_benchmark_worker" {
   source = "../../modules/alloy-sidecar"
-  count  = var.benchmark_enabled && var.loki_enabled ? 1 : 0
+  count  = var.benchmark_enabled ? 1 : 0
 
   project_name                     = var.project_name
   service_name                     = "benchmark-worker"
@@ -533,7 +549,6 @@ module "alloy_benchmark_worker" {
   loki_endpoint                    = "${module.observability.loki_endpoint}/loki/api/v1/push"
   region                           = var.region
   alloy_image                      = var.alloy_image
-  log_group_name                   = "/ecs/${var.project_name}/benchmark-worker"
 }
 
 # -----------------------------------------------------------------------------
@@ -560,12 +575,14 @@ module "benchmark" {
   benchmark_image                = var.benchmark_image
   cpu                            = var.benchmark_cpu
   memory                         = var.benchmark_memory
+  worker_cpu                     = var.benchmark_worker_cpu
+  worker_memory                  = var.benchmark_worker_memory
   max_instances                  = var.benchmark_max_instances
   log_retention_days             = var.log_retention_days
-  alloy_init_container           = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark[0].init_container_definition : null
-  alloy_sidecar_container        = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark[0].sidecar_container_definition : null
-  alloy_worker_init_container    = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark_worker[0].init_container_definition : null
-  alloy_worker_sidecar_container = var.benchmark_enabled && var.loki_enabled ? module.alloy_benchmark_worker[0].sidecar_container_definition : null
+  alloy_init_container           = var.benchmark_enabled ? module.alloy_benchmark[0].init_container_definition : null
+  alloy_sidecar_container        = var.benchmark_enabled ? module.alloy_benchmark[0].sidecar_container_definition : null
+  alloy_worker_init_container    = var.benchmark_enabled ? module.alloy_benchmark_worker[0].init_container_definition : null
+  alloy_worker_sidecar_container = var.benchmark_enabled ? module.alloy_benchmark_worker[0].sidecar_container_definition : null
 }
 
 
@@ -618,4 +635,60 @@ resource "aws_security_group_rule" "opensearch_from_temporal_worker" {
   protocol                 = "tcp"
   source_security_group_id = module.temporal_worker.security_group_id
   security_group_id        = module.opensearch.security_group_id
+}
+
+# -----------------------------------------------------------------------------
+# Loki Ingress from Temporal Services and Benchmark
+# -----------------------------------------------------------------------------
+# Allow Alloy sidecars to push logs to Loki
+
+resource "aws_security_group_rule" "loki_from_temporal_history" {
+  type                     = "ingress"
+  description              = "HTTP from History (Alloy sidecar)"
+  from_port                = 3100
+  to_port                  = 3100
+  protocol                 = "tcp"
+  source_security_group_id = module.temporal_history.security_group_id
+  security_group_id        = module.observability.loki_security_group_id
+}
+
+resource "aws_security_group_rule" "loki_from_temporal_matching" {
+  type                     = "ingress"
+  description              = "HTTP from Matching (Alloy sidecar)"
+  from_port                = 3100
+  to_port                  = 3100
+  protocol                 = "tcp"
+  source_security_group_id = module.temporal_matching.security_group_id
+  security_group_id        = module.observability.loki_security_group_id
+}
+
+resource "aws_security_group_rule" "loki_from_temporal_frontend" {
+  type                     = "ingress"
+  description              = "HTTP from Frontend (Alloy sidecar)"
+  from_port                = 3100
+  to_port                  = 3100
+  protocol                 = "tcp"
+  source_security_group_id = module.temporal_frontend.security_group_id
+  security_group_id        = module.observability.loki_security_group_id
+}
+
+resource "aws_security_group_rule" "loki_from_temporal_worker" {
+  type                     = "ingress"
+  description              = "HTTP from Worker (Alloy sidecar)"
+  from_port                = 3100
+  to_port                  = 3100
+  protocol                 = "tcp"
+  source_security_group_id = module.temporal_worker.security_group_id
+  security_group_id        = module.observability.loki_security_group_id
+}
+
+resource "aws_security_group_rule" "loki_from_benchmark" {
+  count                    = var.benchmark_enabled ? 1 : 0
+  type                     = "ingress"
+  description              = "HTTP from Benchmark (Alloy sidecar)"
+  from_port                = 3100
+  to_port                  = 3100
+  protocol                 = "tcp"
+  source_security_group_id = module.benchmark[0].security_group_id
+  security_group_id        = module.observability.loki_security_group_id
 }

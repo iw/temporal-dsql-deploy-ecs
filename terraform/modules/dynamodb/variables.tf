@@ -10,7 +10,7 @@ variable "project_name" {
 }
 
 variable "conn_lease_enabled" {
-  description = "Enable creation of connection lease table for distributed connection count limiting"
+  description = "Create connection lease table. Set to true to create the table. Table is not destroyed when set to false after creation - use lifecycle prevent_destroy."
   type        = bool
-  default     = false
+  default     = true
 }

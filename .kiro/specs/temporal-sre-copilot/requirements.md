@@ -284,3 +284,59 @@ The system uses a separate Temporal cluster running Pydantic AI workflows to con
    - No LLM involvement in state transitions
    - Rules are code, not prompts
    - State transitions are logged with contributing signals
+
+### Requirement 13: Date and Time Handling
+
+**User Story:** As a platform engineer, I want all date and time handling to use a modern, type-safe library with UTC-first design, so that timezone bugs are eliminated and code is more maintainable.
+
+#### Acceptance Criteria
+
+1. THE Copilot SHALL use the `whenever` library (https://github.com/ariebovenberg/whenever) for all date and time handling
+2. ALL timestamps SHALL be stored and processed in UTC
+3. THE Copilot SHALL use `whenever` types instead of Python's `datetime`:
+   - `Instant` for points in time (replaces `datetime.datetime`)
+   - `TimeDelta` for durations (replaces `datetime.timedelta`)
+4. THE Copilot SHALL use the Rust-backed `whenever` package for performance
+5. WHEN serializing timestamps for JSON API responses, THE Copilot SHALL use ISO 8601 format
+6. WHEN storing timestamps in DSQL, THE Copilot SHALL convert to `TIMESTAMPTZ`
+7. THE Copilot SHALL NOT use Python's `datetime` module directly for any new code
+
+### Requirement 14: Worker Health Model
+
+**User Story:** As an operator, I want the Copilot to understand worker-side health separately from server-side health, so that I can distinguish between "server can't keep up" and "workers can't keep up" scenarios.
+
+#### Acceptance Criteria
+
+1. THE Copilot SHALL collect worker-side signals from SDK metrics:
+   - `temporal_workflow_task_schedule_to_start_latency` (< 50ms is healthy)
+   - `temporal_activity_schedule_to_start_latency`
+   - `temporal_worker_task_slots_available` (0 = worker stops polling)
+   - `temporal_worker_task_slots_used`
+   - `temporal_num_pollers` (by poller_type)
+   - `temporal_sticky_cache_size`, `temporal_sticky_cache_hit`, `temporal_sticky_cache_miss`
+2. THE Copilot SHALL classify bottlenecks into four categories:
+   - **Server-limited**: Server can't keep up (high backlog, persistence latency)
+   - **Worker-limited**: Workers can't keep up (slots exhausted, high schedule-to-start)
+   - **Mixed**: Both server and workers under pressure
+   - **Healthy**: Neither constrained
+3. THE Health_State_Machine SHALL evaluate worker health AFTER server health:
+   - If server is Critical, worker advice is irrelevant
+   - If server is Happy/Stressed, assess worker readiness
+4. THE Copilot SHALL apply worker-specific thresholds:
+   - Workflow task schedule-to-start > 50ms indicates worker pressure
+   - `task_slots_available == 0` indicates worker saturation
+5. THE Copilot SHALL encode worker scaling warnings as deterministic rules:
+   - NEVER recommend scaling down workers when `task_slots_available == 0`
+   - Sticky queues prevent new workers from getting long-running workflow work
+   - Consider recommending restart of % of existing workers to redistribute
+6. THE Copilot SHALL collect worker amplifier signals:
+   - Sticky cache hit/miss rate (cache thrash increases DB reads)
+   - Long-poll latency and failures
+   - Poller vs executor slot mismatch
+7. THE RAG knowledge base SHALL include worker remediation guidance:
+   - Worker scaling best practices
+   - Sticky cache tuning
+   - Poller configuration
+   - Executor slot sizing
+
+**Source:** Temporal Workers presentation (Tihomir Surdilovic, 2024) - treated as authoritative worker execution doctrine.

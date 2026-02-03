@@ -19,7 +19,7 @@ resource "aws_s3_bucket" "loki" {
   }
 
   # Prevent accidental deletion of log data
-  # To destroy: manually empty bucket, then comment out this block
+  # To destroy: manually empty bucket, then set prevent_destroy = false
   lifecycle {
     prevent_destroy = true
   }
