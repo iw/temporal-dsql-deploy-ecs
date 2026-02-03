@@ -201,6 +201,13 @@ This separation allows independent scaling of workers to handle high WPS loads w
 - Increased pollers to 32 per worker to improve workflow task throughput
 - For 6k st/s turbo config: use 16 workers × 32 pollers = 512 total pollers
 
+**Poller Autoscaling (SDK v1.39.0+):**
+The benchmark worker now uses SDK poller autoscaling instead of fixed poller counts:
+- `WorkflowTaskPollerBehavior`: Autoscales from 4 to 32 pollers based on load
+- `ActivityTaskPollerBehavior`: Autoscales from 2 to 8 pollers (low because eager activities bypass queue)
+- SDK dynamically adjusts pollers based on task queue backlog
+- Eliminates wasted pollers when queue is empty, scales up under load
+
 **Server-Side Requirements for Worker Optimizations:**
 - `system.enableActivityEagerExecution: true` - Required for eager activities (default: false)
 - `system.enableEagerWorkflowStart: true` - Enabled by default, allows inline first workflow task

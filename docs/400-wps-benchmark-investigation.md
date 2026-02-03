@@ -516,25 +516,29 @@ go func() {
 
 ```go
 // For state-transitions workflow (eager activities, short-lived)
+// Using SDK v1.39.0+ poller autoscaling
 workerOptions := worker.Options{
     // Execution slots - keep high for throughput
     MaxConcurrentWorkflowTaskExecutionSize:  200,
     MaxConcurrentActivityExecutionSize:      50,   // Reduced - eager activities
     MaxConcurrentLocalActivityExecutionSize: 200,
     
-    // Pollers - rebalanced for non-sticky work
-    MaxConcurrentWorkflowTaskPollers:        32,
-    MaxConcurrentActivityTaskPollers:        4,    // Reduced - eager activities
+    // Poller autoscaling (SDK v1.39.0+) - dynamically adjusts based on load
+    WorkflowTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+        InitialNumberOfPollers: 4,  // Start low
+        MaximumNumberOfPollers: 32, // Scale up to 32 if needed
+    }),
+    ActivityTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+        InitialNumberOfPollers: 2, // Start very low - eager activities bypass queue
+        MaximumNumberOfPollers: 8, // Max 8 - most activities are eager
+    }),
     
     // Eager execution - enabled for latency
     DisableEagerActivities:                  false,
     MaxConcurrentEagerActivityExecutionSize: 100,
     
     // Sticky execution - reduced timeout for faster fallback
-    StickyScheduleToStartTimeout:            1 * time.Second,  // Was 5s
-    
-    // OR: Disable sticky entirely for benchmark
-    // DisableStickyExecution: true,
+    StickyScheduleToStartTimeout:            2 * time.Second,  // Was 5s
 }
 ```
 
@@ -547,3 +551,77 @@ With these fixes:
 4. **Target rate respected**: Generator won't overshoot 400 WPS
 
 The 46 workers on 14 × m8g.4xlarge instances have **massive unused capacity**. With proper configuration, 400 WPS should be trivially achievable.
+
+---
+
+## Appendix C: Fixes Implemented
+
+### Fix 1: Generator Rate Control with Semaphore (Implemented)
+
+Added `maxInflight` semaphore to limit concurrent in-flight workflows:
+
+```go
+// generator.go - WithMaxInflight option
+func WithMaxInflight(max int64) GeneratorOption {
+    return func(g *Generator) {
+        g.maxInflight = max
+    }
+}
+
+// In startWorkflow - acquire semaphore before starting
+if !g.inflightSem.TryAcquire(1) {
+    // Backpressure - skip this tick
+    return
+}
+defer g.inflightSem.Release(1)
+```
+
+Default: `maxInflight = min(10000, max(1000, targetRate * 30))`
+
+### Fix 2: Poller Autoscaling (Implemented)
+
+Upgraded SDK from v1.31.0 to v1.39.0 and enabled poller autoscaling:
+
+```go
+// main.go - runWorkerOnly()
+WorkflowTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+    InitialNumberOfPollers: 4,
+    MaximumNumberOfPollers: 32,
+}),
+ActivityTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+    InitialNumberOfPollers: 2,
+    MaximumNumberOfPollers: 8,
+}),
+```
+
+This replaces fixed `MaxConcurrentWorkflowTaskPollers` and `MaxConcurrentActivityTaskPollers` settings.
+
+### Fix 3: Reduced Activity Execution Slots (Implemented)
+
+```go
+MaxConcurrentActivityExecutionSize: 50,  // Was 200
+```
+
+### Fix 4: Reduced Sticky Timeout (Implemented)
+
+```go
+StickyScheduleToStartTimeout: 2 * time.Second,  // Was 5s
+```
+
+### Fix 5: Wait-for-Frontend Init Container (Implemented)
+
+Added init container to benchmark worker Terraform to wait for frontend availability:
+
+```hcl
+# worker.tf
+init_container {
+    name      = "wait-for-frontend"
+    image     = "busybox:1.36"
+    essential = false
+    command   = ["sh", "-c", "until nc -z temporal-frontend.temporal-bench.local 7233; do sleep 2; done"]
+}
+```
+
+### Fix 6: Logging to Loki (Implemented)
+
+Removed CloudWatch logging from benchmark containers - logs now go to Loki via Alloy sidecar.

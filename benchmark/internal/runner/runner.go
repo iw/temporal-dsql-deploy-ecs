@@ -198,19 +198,27 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 		// Create a worker to process workflows in the benchmark namespace
 		// Optimized for high-throughput benchmarking with eager activities
 		//
-		// Key optimizations based on 400 WPS benchmark investigation:
-		// 1. Reduced activity pollers (4 vs 16) - eager activities bypass activity queue
-		// 2. Reduced sticky timeout (2s vs 5s) - faster fallback to non-sticky queue
-		// 3. High workflow task pollers (16) - maximize non-sticky queue throughput
+		// Key optimizations based on 400 WPS benchmark investigation and omes patterns:
+		// 1. Poller autoscaling - SDK dynamically adjusts pollers based on load
+		// 2. Reduced activity pollers (max 8) - eager activities bypass activity queue
+		// 3. High workflow task pollers (max 16) - maximize non-sticky queue throughput
+		// 4. Reduced sticky timeout (2s) - faster fallback to non-sticky queue
 		workerOptions := worker.Options{
 			// Execution slots - high for throughput
 			MaxConcurrentWorkflowTaskExecutionSize:  200,
 			MaxConcurrentActivityExecutionSize:      50, // Reduced - eager activities don't need many
 			MaxConcurrentLocalActivityExecutionSize: 200,
 
-			// Pollers - optimized for workflow-heavy workloads with eager activities
-			MaxConcurrentWorkflowTaskPollers: 16,
-			MaxConcurrentActivityTaskPollers: 4, // Reduced from 16 - eager activities bypass queue
+			// Poller autoscaling (SDK v1.39.0+) - dynamically adjusts based on load
+			// Embedded worker uses lower limits than dedicated workers
+			WorkflowTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+				InitialNumberOfPollers: 2,  // Start low
+				MaximumNumberOfPollers: 16, // Scale up to 16 if needed
+			}),
+			ActivityTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+				InitialNumberOfPollers: 1, // Start very low - eager activities bypass queue
+				MaximumNumberOfPollers: 4, // Max 4 - most activities are eager
+			}),
 
 			// Eager activity execution - reduces latency by executing locally
 			DisableEagerActivities:                  false,
@@ -228,7 +236,7 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 			return nil, fmt.Errorf("failed to start worker: %w", err)
 		}
 		defer w.Stop()
-		slog.Info("Embedded worker started")
+		slog.Info("Embedded worker started with poller autoscaling")
 	} else {
 		slog.Info("Generator-only mode: no embedded worker (workflows processed by external workers)")
 	}

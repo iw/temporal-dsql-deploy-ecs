@@ -194,7 +194,7 @@ func run(ctx context.Context) error {
 
 // runWorkerOnly runs only the worker without generating workflows.
 // This is used when running separate worker services to process benchmark workflows.
-func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClient client.Client, metricsHandler metrics.MetricsHandler, sdkMetricsHandler client.MetricsHandler) error {
+func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, _ client.Client, metricsHandler metrics.MetricsHandler, sdkMetricsHandler client.MetricsHandler) error {
 	namespace := cfg.Namespace
 	if namespace == "" {
 		namespace = "benchmark"
@@ -228,24 +228,32 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClie
 	}
 	defer nsClient.Close()
 
-	// Create worker with high-throughput settings optimized for state-transitions workflow
+	// Create worker with poller autoscaling (SDK v1.39.0+)
 	//
-	// Key optimizations based on 400 WPS benchmark investigation:
-	// 1. Reduced activity pollers (4 vs 32) - eager activities bypass activity queue
-	// 2. Reduced sticky timeout (2s vs 5s) - faster fallback to non-sticky queue
-	// 3. High workflow task pollers (32) - maximize non-sticky queue throughput
+	// Key optimizations based on 400 WPS benchmark investigation and omes patterns:
+	// 1. Poller autoscaling - SDK dynamically adjusts pollers based on load
+	// 2. Reduced activity pollers (max 8) - eager activities bypass activity queue
+	// 3. High workflow task pollers (max 32) - maximize non-sticky queue throughput
+	// 4. Reduced sticky timeout (2s) - faster fallback to non-sticky queue
 	//
 	// The state-transitions workflow uses eager activities, so most activity pollers
-	// are wasted. By reducing them, we free up resources for workflow task processing.
+	// are wasted. Autoscaling starts low and scales up only if needed.
 	workerOptions := worker.Options{
 		// Execution slots - high for throughput
 		MaxConcurrentWorkflowTaskExecutionSize:  200,
 		MaxConcurrentActivityExecutionSize:      50, // Reduced - eager activities don't need many
 		MaxConcurrentLocalActivityExecutionSize: 200,
 
-		// Pollers - optimized for workflow-heavy workloads
-		MaxConcurrentWorkflowTaskPollers: 32,
-		MaxConcurrentActivityTaskPollers: 4, // Reduced from 32 - eager activities bypass queue
+		// Poller autoscaling (SDK v1.39.0+) - dynamically adjusts based on load
+		// This replaces fixed MaxConcurrentWorkflowTaskPollers/MaxConcurrentActivityTaskPollers
+		WorkflowTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+			InitialNumberOfPollers: 4,  // Start low
+			MaximumNumberOfPollers: 32, // Scale up to 32 if needed
+		}),
+		ActivityTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
+			InitialNumberOfPollers: 2, // Start very low - eager activities bypass queue
+			MaximumNumberOfPollers: 8, // Max 8 - most activities are eager
+		}),
 
 		// Eager execution - enabled for latency optimization
 		DisableEagerActivities:                  false,
@@ -263,7 +271,12 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, temporalClie
 	if err := w.Start(); err != nil {
 		return fmt.Errorf("failed to start worker: %w", err)
 	}
-	slog.Info("Worker started, waiting for tasks")
+	slog.Info("Worker started with poller autoscaling",
+		"workflow_pollers_initial", 4,
+		"workflow_pollers_max", 32,
+		"activity_pollers_initial", 2,
+		"activity_pollers_max", 8,
+	)
 
 	// Wait for shutdown signal
 	<-ctx.Done()
