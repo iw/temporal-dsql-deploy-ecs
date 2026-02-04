@@ -198,11 +198,10 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 		// Create a worker to process workflows in the benchmark namespace
 		// Optimized for high-throughput benchmarking with eager activities
 		//
-		// Key optimizations based on 400 WPS benchmark investigation and omes patterns:
-		// 1. Poller autoscaling - SDK dynamically adjusts pollers based on load
-		// 2. Reduced activity pollers (max 8) - eager activities bypass activity queue
-		// 3. High workflow task pollers (max 16) - maximize non-sticky queue throughput
-		// 4. Reduced sticky timeout (2s) - faster fallback to non-sticky queue
+		// Key optimizations based on 400 WPS benchmark investigation:
+		// 1. Sticky execution DISABLED - eliminates sticky/non-sticky queue contention
+		// 2. Poller autoscaling - SDK dynamically adjusts pollers based on load
+		// 3. Reduced activity pollers - eager activities bypass activity queue
 		workerOptions := worker.Options{
 			// Execution slots - high for throughput
 			MaxConcurrentWorkflowTaskExecutionSize:  200,
@@ -210,7 +209,6 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 			MaxConcurrentLocalActivityExecutionSize: 200,
 
 			// Poller autoscaling (SDK v1.39.0+) - dynamically adjusts based on load
-			// Embedded worker uses lower limits than dedicated workers
 			WorkflowTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
 				InitialNumberOfPollers: 2,  // Start low
 				MaximumNumberOfPollers: 16, // Scale up to 16 if needed
@@ -224,8 +222,9 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 			DisableEagerActivities:                  false,
 			MaxConcurrentEagerActivityExecutionSize: 100,
 
-			// Sticky execution - reduced timeout for faster fallback to non-sticky queue
-			StickyScheduleToStartTimeout: 2 * time.Second, // Reduced from 5s
+			// Sticky execution effectively DISABLED by setting timeout to 0
+			// All workflow tasks go to non-sticky queue, eliminating contention
+			StickyScheduleToStartTimeout: 0,
 		}
 
 		w = worker.New(nsClient, DefaultTaskQueue, workerOptions)
@@ -236,7 +235,7 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 			return nil, fmt.Errorf("failed to start worker: %w", err)
 		}
 		defer w.Stop()
-		slog.Info("Embedded worker started with poller autoscaling")
+		slog.Info("Embedded worker started with sticky disabled")
 	} else {
 		slog.Info("Generator-only mode: no embedded worker (workflows processed by external workers)")
 	}
