@@ -23,6 +23,7 @@
 #   --namespace NAME        Namespace for benchmark workflows (default: benchmark)
 #   --activity-count COUNT  Activities for multi-activity workflow (default: 5)
 #   --generator-only        Run in generator-only mode (use separate benchmark workers)
+#   --fire-and-forget       Submit workflows without waiting for completion (measures st/s)
 #   --wait                  Wait for task to complete and show results
 #   -h, --help              Show this help message
 #
@@ -58,6 +59,7 @@ WORKER_COUNT="4"
 ACTIVITY_COUNT="5"
 NAMESPACE="benchmark"
 GENERATOR_ONLY=false
+FIRE_AND_FORGET=false
 WAIT_FOR_COMPLETION=false
 
 show_usage() {
@@ -121,6 +123,11 @@ while [[ $# -gt 0 ]]; do
             GENERATOR_ONLY=true
             shift
             ;;
+        --fire-and-forget)
+            FIRE_AND_FORGET=true
+            GENERATOR_ONLY=true  # fire-and-forget implies generator-only
+            shift
+            ;;
         --wait)
             WAIT_FOR_COMPLETION=true
             shift
@@ -167,6 +174,23 @@ if [ -z "$GENERATOR_SERVICE" ]; then
     GENERATOR_SERVICE="${PROJECT_NAME}-benchmark-generator"
 fi
 
+# Extract system info from terraform.tfvars for results reporting
+TFVARS_FILE="$ENV_DIR/terraform.tfvars"
+INSTANCE_TYPE=""
+HISTORY_SHARDS=""
+HISTORY_COUNT=""
+MATCHING_COUNT=""
+FRONTEND_COUNT=""
+WORKER_COUNT=""
+if [ -f "$TFVARS_FILE" ]; then
+    INSTANCE_TYPE=$(grep '^ec2_instance_type' "$TFVARS_FILE" 2>/dev/null | sed 's/.*=\s*"//' | sed 's/".*//' || echo "")
+    HISTORY_SHARDS=$(grep '^temporal_history_shards' "$TFVARS_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ' || echo "")
+    HISTORY_COUNT=$(grep '^temporal_history_count' "$TFVARS_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ' || echo "")
+    MATCHING_COUNT=$(grep '^temporal_matching_count' "$TFVARS_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ' || echo "")
+    FRONTEND_COUNT=$(grep '^temporal_frontend_count' "$TFVARS_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ' || echo "")
+    WORKER_COUNT=$(grep '^temporal_worker_count' "$TFVARS_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ' || echo "")
+fi
+
 echo ""
 echo "Configuration:"
 echo "  Environment:    $ENVIRONMENT"
@@ -178,6 +202,7 @@ echo "  Target Rate:    $TARGET_RATE WPS"
 echo "  Duration:       $DURATION"
 echo "  Namespace:      $NAMESPACE"
 echo "  Generator Only: $GENERATOR_ONLY"
+echo "  Fire & Forget: $FIRE_AND_FORGET"
 echo ""
 
 # Get current task definition
@@ -212,6 +237,13 @@ ENV_OVERRIDES=$(cat <<EOF
   {"name": "BENCHMARK_WORKER_COUNT", "value": "$WORKER_COUNT"},
   {"name": "BENCHMARK_ACTIVITY_COUNT", "value": "$ACTIVITY_COUNT"},
   {"name": "BENCHMARK_GENERATOR_ONLY", "value": "$GENERATOR_ONLY"},
+  {"name": "BENCHMARK_FIRE_AND_FORGET", "value": "$FIRE_AND_FORGET"},
+  {"name": "BENCHMARK_INSTANCE_TYPE", "value": "$INSTANCE_TYPE"},
+  {"name": "BENCHMARK_HISTORY_SHARDS", "value": "$HISTORY_SHARDS"},
+  {"name": "BENCHMARK_HISTORY_COUNT", "value": "$HISTORY_COUNT"},
+  {"name": "BENCHMARK_MATCHING_COUNT", "value": "$MATCHING_COUNT"},
+  {"name": "BENCHMARK_FRONTEND_COUNT", "value": "$FRONTEND_COUNT"},
+  {"name": "BENCHMARK_SERVICE_WORKER_COUNT", "value": "$WORKER_COUNT"},
   {"name": "TEMPORAL_ADDRESS", "value": "temporal-frontend:7233"},
   {"name": "BENCHMARK_ITERATIONS", "value": "1"},
   {"name": "BENCHMARK_MAX_P99_LATENCY", "value": "5s"},

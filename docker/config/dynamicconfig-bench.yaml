@@ -136,10 +136,10 @@ matching.longPollExpirationInterval:
   - value: 60s
     constraints: {}
 
-# Forwarder settings - moderate values to avoid draining pollers from child partitions
-# With 8 partitions and good poller density, forwarding should be minimal
+# Forwarder settings - near-default to prevent draining pollers from child partitions
+# With 8 partitions × 2 max forwarded polls = 14 forwarded (keeps ~466/480 pollers local)
 matching.forwarderMaxOutstandingPolls:
-  - value: 20
+  - value: 2
     constraints: {}
 
 matching.forwarderMaxOutstandingTasks:
@@ -148,6 +148,12 @@ matching.forwarderMaxOutstandingTasks:
 
 matching.forwarderMaxRatePerSecond:
   - value: 2000
+    constraints: {}
+
+# Sync match wait - give pollers more time to arrive before falling to async buffer
+# Default 200ms, increased to 500ms to reduce async dispatch rate
+matching.syncMatchWaitDuration:
+  - value: 500ms
     constraints: {}
 
 # =============================================================================

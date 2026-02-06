@@ -242,6 +242,7 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 			r.metricsHandler.RecordWorkflowResult(err == nil)
 		}),
 		generator.WithMaxInflight(maxInflight),
+		generator.WithFireAndForget(cfg.FireAndForget),
 	)
 
 	// Start generating workflows
@@ -262,25 +263,35 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 		slog.Warn("Failed to stop generator", "error", err)
 	}
 
-	// Wait for remaining workflows to complete (with timeout)
-	// Calculate completion timeout: use configured value or auto-calculate based on workload
-	completionTimeout := cfg.CompletionTimeout
-	if completionTimeout == 0 {
-		// Auto-calculate: estimate based on expected in-flight workflows
-		// At high WPS, many workflows may still be in-flight when test ends
-		// Use: max(60s, duration) to allow at least as much drain time as test duration
-		expectedWorkflows := cfg.TargetRate * cfg.Duration.Seconds()
-		completionTimeout = max(60*time.Second, cfg.Duration)
-		// Cap at 10 minutes to avoid indefinite waits
-		completionTimeout = min(completionTimeout, 10*time.Minute)
-		slog.Info("Auto-calculated completion timeout",
-			"timeout", completionTimeout,
-			"expected_workflows", expectedWorkflows)
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, completionTimeout)
-	defer cancel()
-	if err := gen.Wait(waitCtx); err != nil {
-		slog.Warn("Some workflows may not have completed", "error", err)
+	// In fire-and-forget mode, we don't wait for workflow completions.
+	// The primary metric is st/s measured via server-side metrics, not end-to-end latency.
+	if cfg.FireAndForget {
+		slog.Info("Fire-and-forget mode: skipping completion wait, st/s is the primary metric")
+		// Brief wait for any pending start RPCs to complete
+		waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		_ = gen.Wait(waitCtx)
+	} else {
+		// Wait for remaining workflows to complete (with timeout)
+		// Calculate completion timeout: use configured value or auto-calculate based on workload
+		completionTimeout := cfg.CompletionTimeout
+		if completionTimeout == 0 {
+			// Auto-calculate: estimate based on expected in-flight workflows
+			// At high WPS, many workflows may still be in-flight when test ends
+			// Use: max(60s, duration) to allow at least as much drain time as test duration
+			expectedWorkflows := cfg.TargetRate * cfg.Duration.Seconds()
+			completionTimeout = max(60*time.Second, cfg.Duration)
+			// Cap at 10 minutes to avoid indefinite waits
+			completionTimeout = min(completionTimeout, 10*time.Minute)
+			slog.Info("Auto-calculated completion timeout",
+				"timeout", completionTimeout,
+				"expected_workflows", expectedWorkflows)
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, completionTimeout)
+		defer cancel()
+		if err := gen.Wait(waitCtx); err != nil {
+			slog.Warn("Some workflows may not have completed", "error", err)
+		}
 	}
 
 	endTime := time.Now()
@@ -300,9 +311,9 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 		LatencyP95:         percentiles.P95,
 		LatencyP99:         percentiles.P99,
 		LatencyMax:         percentiles.Max,
-		InstanceType:       "m7g.large", // Default for ECS deployment
-		ServiceCounts:      map[string]int{"frontend": 1, "history": 1, "matching": 1, "worker": 1},
-		HistoryShards:      4, // Default shard count
+		InstanceType:       cfg.InstanceType,
+		ServiceCounts:      buildServiceCounts(cfg),
+		HistoryShards:      cfg.HistoryShards,
 		Passed:             true,
 		FailureReasons:     []string{},
 	}, nil
@@ -432,6 +443,24 @@ func (r *runner) CleanupWithResult(ctx context.Context, namespace string) (*clea
 // GetCleaner returns the underlying cleaner for direct access if needed.
 func (r *runner) GetCleaner() *cleanup.Cleaner {
 	return r.cleaner
+}
+
+// buildServiceCounts creates the service counts map from config.
+func buildServiceCounts(cfg config.BenchmarkConfig) map[string]int {
+	counts := make(map[string]int)
+	if cfg.HistoryCount > 0 {
+		counts["history"] = cfg.HistoryCount
+	}
+	if cfg.MatchingCount > 0 {
+		counts["matching"] = cfg.MatchingCount
+	}
+	if cfg.FrontendCount > 0 {
+		counts["frontend"] = cfg.FrontendCount
+	}
+	if cfg.ServiceWorkerCount > 0 {
+		counts["worker"] = cfg.ServiceWorkerCount
+	}
+	return counts
 }
 
 // aggregateResults combines results from multiple iterations.

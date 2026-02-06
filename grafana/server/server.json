@@ -43,7 +43,7 @@
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_count[1m]))", "legendFormat": "state transitions/sec" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_sum[1m]))", "legendFormat": "state transitions/sec" }]
     },
     {
       "id": 102,
@@ -54,7 +54,7 @@
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 1 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_count{service_name=~\"history.*\"}[1m]))", "legendFormat": "history transitions/sec" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_sum{service_name=~\"history.*\"}[1m]))", "legendFormat": "history transitions/sec" }]
     },
     {
       "id": 103,
@@ -79,7 +79,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 15 },
       "fieldConfig": { "defaults": { "unit": "reqps", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(service_requests_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "requests/sec" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(service_requests{namespace=~\"$namespace\"}[1m]))", "legendFormat": "requests/sec" }]
     },
     {
       "id": 4,
@@ -90,7 +90,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 15 },
       "fieldConfig": { "defaults": { "unit": "reqps", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.1 }, { "color": "red", "value": 1 }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(service_error_with_type_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "errors/sec" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(service_error_with_type{namespace=~\"$namespace\"}[1m]))", "legendFormat": "errors/sec" }]
     },
     {
       "id": 5,
@@ -101,7 +101,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 15 },
       "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(workflow_success_total{namespace=~\"$namespace\"}[1m])) * 60", "legendFormat": "success/min" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(workflow_success{namespace=~\"$namespace\"}[1m])) * 60", "legendFormat": "success/min" }]
     },
     {
       "id": 6,
@@ -112,7 +112,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 15 },
       "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(workflow_failed_total{namespace=~\"$namespace\"}[1m]) + rate(workflow_timeout_total{namespace=~\"$namespace\"}[1m]) + rate(workflow_terminate_total{namespace=~\"$namespace\"}[1m])) * 60", "legendFormat": "failures/min" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(workflow_failed{namespace=~\"$namespace\"}[1m]) + rate(workflow_timeout{namespace=~\"$namespace\"}[1m]) + rate(workflow_terminate{namespace=~\"$namespace\"}[1m])) * 60", "legendFormat": "failures/min" }]
     },
 
     {
@@ -124,7 +124,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } },
-      "targets": [{ "refId": "A", "expr": "topk(10, sum by (operation) (rate(service_requests_total{namespace=~\"$namespace\"}[1m])))", "legendFormat": "{{operation}}" }]
+      "targets": [{ "refId": "A", "expr": "topk(10, sum by (operation) (rate(service_requests{namespace=~\"$namespace\"}[1m])))", "legendFormat": "{{operation}}" }]
     },
     {
       "id": 8,
@@ -161,8 +161,8 @@
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(task_requests_total{service_name=\"history\"}[1m]))", "legendFormat": "task_requests" },
-        { "refId": "B", "expr": "sum(rate(task_errors_total{service_name=\"history\"}[1m]))", "legendFormat": "task_errors" }
+        { "refId": "A", "expr": "sum(rate(task_requests{service_name=\"history\"}[1m]))", "legendFormat": "task_requests" },
+        { "refId": "B", "expr": "sum(rate(task_errors{service_name=\"history\"}[1m]))", "legendFormat": "task_errors" }
       ]
     },
     {
@@ -204,9 +204,9 @@
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(sharditem_created_count_total[5m]))", "legendFormat": "shards_created/sec" },
-        { "refId": "B", "expr": "sum(rate(sharditem_removed_count_total[5m]))", "legendFormat": "shards_removed/sec" },
-        { "refId": "C", "expr": "sum(rate(shard_closed_count_total[5m]))", "legendFormat": "shards_closed/sec" }
+        { "refId": "A", "expr": "sum(rate(sharditem_created_count[5m]))", "legendFormat": "shards_created/sec" },
+        { "refId": "B", "expr": "sum(rate(sharditem_removed_count[5m]))", "legendFormat": "shards_removed/sec" },
+        { "refId": "C", "expr": "sum(rate(shard_closed_count[5m]))", "legendFormat": "shards_closed/sec" }
       ]
     },
 
@@ -232,7 +232,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 51 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean"] } },
-      "targets": [{ "refId": "A", "expr": "topk(10, sum by (operation) (rate(persistence_requests_total[1m])))", "legendFormat": "{{operation}}" }]
+      "targets": [{ "refId": "A", "expr": "topk(10, sum by (operation) (rate(persistence_requests[1m])))", "legendFormat": "{{operation}}" }]
     },
     {
       "id": 18,
@@ -255,8 +255,8 @@
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } },
       "targets": [
-        { "refId": "A", "expr": "sum by (operation) (rate(persistence_errors_total[1m]))", "legendFormat": "{{operation}}" },
-        { "refId": "B", "expr": "sum by (error_type) (rate(persistence_error_with_type_total[1m]))", "legendFormat": "type: {{error_type}}" }
+        { "refId": "A", "expr": "sum by (operation) (rate(persistence_errors[1m]))", "legendFormat": "{{operation}}" },
+        { "refId": "B", "expr": "sum by (error_type) (rate(persistence_error_with_type[1m]))", "legendFormat": "type: {{error_type}}" }
       ]
     },
 
@@ -283,8 +283,8 @@
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(poll_success_total[1m]))", "legendFormat": "poll_success" },
-        { "refId": "B", "expr": "sum(rate(poll_timeouts_total[1m]))", "legendFormat": "poll_timeouts" }
+        { "refId": "A", "expr": "sum(rate(poll_success[1m]))", "legendFormat": "poll_success" },
+        { "refId": "B", "expr": "sum(rate(poll_timeouts[1m]))", "legendFormat": "poll_timeouts" }
       ]
     },
     {
@@ -310,7 +310,7 @@
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 79 },
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.1 }] } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "targets": [{ "refId": "A", "expr": "sum(rate(no_poller_tasks_total[1m]))", "legendFormat": "no_poller_tasks/sec" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(no_poller_tasks[1m]))", "legendFormat": "no_poller_tasks/sec" }]
     },
 
     {
@@ -336,12 +336,12 @@
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "stacking": { "mode": "normal", "group": "A" } },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(workflow_success_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "success" },
-        { "refId": "B", "expr": "sum(rate(workflow_continued_as_new_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "continued_as_new" },
-        { "refId": "C", "expr": "sum(rate(workflow_failed_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "failed" },
-        { "refId": "D", "expr": "sum(rate(workflow_timeout_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "timeout" },
-        { "refId": "E", "expr": "sum(rate(workflow_terminate_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "terminate" },
-        { "refId": "F", "expr": "sum(rate(workflow_cancel_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "cancel" }
+        { "refId": "A", "expr": "sum(rate(workflow_success{namespace=~\"$namespace\"}[1m]))", "legendFormat": "success" },
+        { "refId": "B", "expr": "sum(rate(workflow_continued_as_new{namespace=~\"$namespace\"}[1m]))", "legendFormat": "continued_as_new" },
+        { "refId": "C", "expr": "sum(rate(workflow_failed{namespace=~\"$namespace\"}[1m]))", "legendFormat": "failed" },
+        { "refId": "D", "expr": "sum(rate(workflow_timeout{namespace=~\"$namespace\"}[1m]))", "legendFormat": "timeout" },
+        { "refId": "E", "expr": "sum(rate(workflow_terminate{namespace=~\"$namespace\"}[1m]))", "legendFormat": "terminate" },
+        { "refId": "F", "expr": "sum(rate(workflow_cancel{namespace=~\"$namespace\"}[1m]))", "legendFormat": "cancel" }
       ]
     },
     {
@@ -354,11 +354,11 @@
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never" } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(activity_success_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "success" },
-        { "refId": "B", "expr": "sum(rate(activity_task_fail_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "task_fail (retryable)" },
-        { "refId": "C", "expr": "sum(rate(activity_fail_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "fail (terminal)" },
-        { "refId": "D", "expr": "sum(rate(activity_timeout_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "timeout" },
-        { "refId": "E", "expr": "sum(rate(activity_cancel_total{namespace=~\"$namespace\"}[1m]))", "legendFormat": "cancel" }
+        { "refId": "A", "expr": "sum(rate(activity_success{namespace=~\"$namespace\"}[1m]))", "legendFormat": "success" },
+        { "refId": "B", "expr": "sum(rate(activity_task_fail{namespace=~\"$namespace\"}[1m]))", "legendFormat": "task_fail (retryable)" },
+        { "refId": "C", "expr": "sum(rate(activity_fail{namespace=~\"$namespace\"}[1m]))", "legendFormat": "fail (terminal)" },
+        { "refId": "D", "expr": "sum(rate(activity_timeout{namespace=~\"$namespace\"}[1m]))", "legendFormat": "timeout" },
+        { "refId": "E", "expr": "sum(rate(activity_cancel{namespace=~\"$namespace\"}[1m]))", "legendFormat": "cancel" }
       ]
     }
   ],
@@ -374,7 +374,7 @@
         "label": "Namespace",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "amp" },
-        "query": "label_values(service_requests_total, namespace)",
+        "query": "label_values(service_requests, namespace)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,

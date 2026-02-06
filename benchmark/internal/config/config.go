@@ -22,7 +22,7 @@ const (
 	MinActivityCount = 1
 	MaxActivityCount = 100
 	MinTargetRate    = 1
-	MaxTargetRate    = 1000
+	MaxTargetRate    = 10000
 	MinDuration      = 1 * time.Minute
 	MaxDuration      = 60 * time.Minute
 	MinWorkerCount   = 1
@@ -58,6 +58,20 @@ type BenchmarkConfig struct {
 	MaxP99Latency time.Duration // Maximum acceptable p99 latency
 	MinThroughput float64       // Minimum acceptable throughput
 
+	// Fire-and-forget mode: submit workflows without waiting for completion.
+	// Measures state transitions/sec as the primary metric instead of end-to-end latency.
+	// Useful for pushing DSQL persistence throughput without being bottlenecked by matching.
+	FireAndForget bool
+
+	// System info for results reporting (populated from environment)
+	InstanceType  string // EC2 instance type (e.g., "m8g.4xlarge")
+	HistoryShards int    // Number of history shards
+	// Service replica counts for results reporting
+	HistoryCount       int
+	MatchingCount      int
+	FrontendCount      int
+	ServiceWorkerCount int
+
 	// Temporal connection
 	TemporalAddress string // Temporal frontend address
 }
@@ -77,6 +91,8 @@ func DefaultConfig() BenchmarkConfig {
 		CompletionTimeout: 0, // 0 means auto-calculate based on rate and duration
 		MaxP99Latency:     5 * time.Second,
 		MinThroughput:     50,
+		InstanceType:      "",
+		HistoryShards:     0,
 		TemporalAddress:   "temporal-frontend:7233",
 	}
 }
@@ -185,6 +201,61 @@ func LoadFromEnv() (BenchmarkConfig, error) {
 			return cfg, fmt.Errorf("invalid BENCHMARK_WORKER_ONLY: %w", err)
 		}
 		cfg.WorkerOnly = b
+	}
+
+	if v := os.Getenv("BENCHMARK_FIRE_AND_FORGET"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_FIRE_AND_FORGET: %w", err)
+		}
+		cfg.FireAndForget = b
+	}
+
+	// System info for results reporting
+	if v := os.Getenv("BENCHMARK_INSTANCE_TYPE"); v != "" {
+		cfg.InstanceType = v
+	}
+
+	if v := os.Getenv("BENCHMARK_HISTORY_SHARDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_HISTORY_SHARDS: %w", err)
+		}
+		cfg.HistoryShards = n
+	}
+
+	if v := os.Getenv("BENCHMARK_HISTORY_COUNT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_HISTORY_COUNT: %w", err)
+		}
+		cfg.HistoryCount = n
+	}
+
+	if v := os.Getenv("BENCHMARK_MATCHING_COUNT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_MATCHING_COUNT: %w", err)
+		}
+		cfg.MatchingCount = n
+	}
+
+	if v := os.Getenv("BENCHMARK_FRONTEND_COUNT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_FRONTEND_COUNT: %w", err)
+		}
+		cfg.FrontendCount = n
+	}
+
+	// Note: BENCHMARK_WORKER_COUNT is already parsed above for the generator worker count.
+	// For service replica count reporting, we use a separate env var.
+	if v := os.Getenv("BENCHMARK_SERVICE_WORKER_COUNT"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid BENCHMARK_SERVICE_WORKER_COUNT: %w", err)
+		}
+		cfg.ServiceWorkerCount = n
 	}
 
 	// Thresholds

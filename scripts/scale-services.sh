@@ -465,6 +465,56 @@ get_short_name() {
     esac
 }
 
+# Function to get the Service Connect namespace ARN from terraform
+get_service_connect_namespace() {
+    local env_dir="$1"
+    cd "$PROJECT_ROOT/$env_dir"
+    local ns_arn
+    ns_arn=$(terraform output -raw service_connect_namespace_arn 2>/dev/null) || ns_arn=""
+    cd "$PROJECT_ROOT"
+    echo "$ns_arn"
+}
+
+# Function to build Service Connect JSON for a service
+build_service_connect_config() {
+    local service_type="$1"
+    local namespace_arn="$2"
+
+    if [ -z "$namespace_arn" ]; then
+        echo ""
+        return
+    fi
+
+    local grpc_port membership_port metrics_port=9090
+    case "$service_type" in
+        history)  grpc_port=7234; membership_port=6934 ;;
+        matching) grpc_port=7235; membership_port=6935 ;;
+        frontend) grpc_port=7233; membership_port=6933 ;;
+        worker)   grpc_port=7239; membership_port=6939 ;;
+        ui|grafana) ;; # Client-only, no ports needed
+        *)        echo ""; return ;;
+    esac
+
+    local service_name="temporal-${service_type}"
+
+    if [ "$service_type" = "worker" ]; then
+        # Worker: expose metrics only (no gRPC)
+        cat <<EOFSC
+{"enabled":true,"namespace":"${namespace_arn}","services":[{"portName":"metrics","discoveryName":"${service_name}-metrics","clientAliases":[{"port":${metrics_port},"dnsName":"${service_name}-metrics"}]}]}
+EOFSC
+    elif [ "$service_type" = "ui" ] || [ "$service_type" = "grafana" ]; then
+        # UI and Grafana: client-only (consume services, expose nothing)
+        cat <<EOFSC
+{"enabled":true,"namespace":"${namespace_arn}"}
+EOFSC
+    else
+        # History, Matching, Frontend: expose gRPC + metrics
+        cat <<EOFSC
+{"enabled":true,"namespace":"${namespace_arn}","services":[{"portName":"grpc","discoveryName":"${service_name}","clientAliases":[{"port":${grpc_port},"dnsName":"${service_name}"}]},{"portName":"metrics","discoveryName":"${service_name}-metrics","clientAliases":[{"port":${metrics_port},"dnsName":"${service_name}-metrics"}]}]}
+EOFSC
+    fi
+}
+
 # Ordered list of services
 SERVICES=(
     "${PROJECT_NAME}-temporal-history"
@@ -514,6 +564,18 @@ if [ "$APPLY_TERRAFORM" = true ] && [ -n "$TARGET_WPS" ]; then
     sleep 5
 fi
 
+# Get Service Connect namespace ARN for scaling up
+SC_NAMESPACE_ARN=""
+if [ "$COMMAND" = "up" ]; then
+    SC_NAMESPACE_ARN=$(get_service_connect_namespace "$ENV_DIR")
+    if [ -n "$SC_NAMESPACE_ARN" ]; then
+        echo "Service Connect: enabled (namespace: $SC_NAMESPACE_ARN)"
+    else
+        echo -e "${YELLOW}Warning: Could not get Service Connect namespace ARN${NC}"
+    fi
+fi
+echo ""
+
 # Scale each service
 for SERVICE in "${SERVICES[@]}"; do
     SHORT_NAME=$(get_short_name "$SERVICE")
@@ -542,14 +604,27 @@ for SERVICE in "${SERVICES[@]}"; do
         continue
     fi
     
-    # Update service desired count
-    aws ecs update-service \
-        --cluster "$CLUSTER_NAME" \
-        --service "$SERVICE" \
-        --desired-count "$TARGET_COUNT" \
-        --region "$AWS_REGION" \
-        --output text \
-        --query 'service.serviceName' > /dev/null
+    # Build update-service arguments
+    UPDATE_ARGS=(
+        --cluster "$CLUSTER_NAME"
+        --service "$SERVICE"
+        --desired-count "$TARGET_COUNT"
+        --region "$AWS_REGION"
+        --force-new-deployment
+        --output text
+        --query 'service.serviceName'
+    )
+
+    # Add Service Connect configuration when scaling up
+    if [ "$COMMAND" = "up" ] && [ -n "$SC_NAMESPACE_ARN" ] && [ "$TARGET_COUNT" -gt 0 ]; then
+        SC_CONFIG=$(build_service_connect_config "$SHORT_NAME" "$SC_NAMESPACE_ARN")
+        if [ -n "$SC_CONFIG" ]; then
+            UPDATE_ARGS+=(--service-connect-configuration "$SC_CONFIG")
+        fi
+    fi
+
+    # Update service
+    aws ecs update-service "${UPDATE_ARGS[@]}" > /dev/null
     
     echo -e "${GREEN}OK${NC}"
 done

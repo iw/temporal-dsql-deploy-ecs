@@ -91,7 +91,7 @@ aws ecr describe-repositories --repository-names "$IMAGE_NAME" --region "$AWS_RE
 # Build the image
 echo "Building Grafana image..."
 cd "$PROJECT_ROOT/grafana"
-docker build --platform linux/arm64 -t "$IMAGE_NAME:$IMAGE_TAG" .
+docker build --no-cache --platform linux/arm64 -t "$IMAGE_NAME:$IMAGE_TAG" .
 docker tag "$IMAGE_NAME:$IMAGE_TAG" "$FULL_IMAGE"
 
 # Push to ECR

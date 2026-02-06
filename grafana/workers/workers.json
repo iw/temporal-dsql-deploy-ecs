@@ -157,9 +157,9 @@
       "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_activity_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
-        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_activity_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
-        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_activity_schedule_to_start_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_activity_schedule_to_start_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_activity_schedule_to_start_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_activity_schedule_to_start_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
       ]
     },
 
@@ -207,7 +207,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 30 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(temporal_activity_execution_latency_count[1m]))", "legendFormat": "tasks/s" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(temporal_activity_execution_latency_seconds_count[1m]))", "legendFormat": "tasks/s" }]
     },
 
     {
@@ -235,7 +235,7 @@
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
         { "refId": "A", "expr": "sum(rate(temporal_workflow_task_execution_latency_count[1m]))", "legendFormat": "workflow tasks/s" },
-        { "refId": "B", "expr": "sum(rate(temporal_activity_execution_latency_count[1m]))", "legendFormat": "activity tasks/s" }
+        { "refId": "B", "expr": "sum(rate(temporal_activity_execution_latency_seconds_count[1m]))", "legendFormat": "activity tasks/s" }
       ]
     },
 
@@ -266,9 +266,9 @@
       "fieldConfig": { "defaults": { "unit": "ms", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_activity_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
-        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_activity_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
-        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_activity_execution_latency_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum(rate(temporal_activity_execution_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "P50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(temporal_activity_execution_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "P95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum(rate(temporal_activity_execution_latency_seconds_bucket[1m])) by (le)) * 1000", "legendFormat": "P99" }
       ]
     },
 

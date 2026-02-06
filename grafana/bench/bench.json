@@ -54,7 +54,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 7 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_count[1m]))", "legendFormat": "st/s" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(state_transition_count_sum[1m]))", "legendFormat": "st/s" }]
     },
     {
       "id": 4,
@@ -65,7 +65,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 7 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(service_requests_total{operation=\"StartWorkflowExecution\"}[1m]))", "legendFormat": "starts/s" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(service_requests{operation=\"StartWorkflowExecution\"}[1m]))", "legendFormat": "starts/s" }]
     },
     {
       "id": 5,
@@ -76,7 +76,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 7 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(workflow_success_total[1m]))", "legendFormat": "completions/s" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(workflow_success[1m]))", "legendFormat": "completions/s" }]
     },
     {
       "id": 6,
@@ -87,7 +87,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 7 },
       "fieldConfig": { "defaults": { "unit": "ops", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(persistence_requests_total{operation=\"UpdateWorkflowExecution\"}[1m]))", "legendFormat": "updates/s" }]
+      "targets": [{ "refId": "A", "expr": "sum(rate(persistence_requests{operation=\"UpdateWorkflowExecution\"}[1m]))", "legendFormat": "updates/s" }]
     },
 
     {
@@ -100,8 +100,8 @@
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(state_transition_count_count[1m]))", "legendFormat": "total st/s" },
-        { "refId": "B", "expr": "sum(rate(state_transition_count_count{service_name=~\"history.*\"}[1m]))", "legendFormat": "history st/s" }
+        { "refId": "A", "expr": "sum(rate(state_transition_count_sum[1m]))", "legendFormat": "total st/s" },
+        { "refId": "B", "expr": "sum(rate(state_transition_count_sum{service_name=~\"history.*\"}[1m]))", "legendFormat": "history st/s" }
       ]
     },
     {
@@ -114,8 +114,8 @@
       "fieldConfig": { "defaults": { "unit": "ops", "custom": { "showPoints": "never", "lineWidth": 2 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
       "targets": [
-        { "refId": "A", "expr": "sum(rate(service_requests_total{operation=\"StartWorkflowExecution\"}[1m]))", "legendFormat": "starts/s" },
-        { "refId": "B", "expr": "sum(rate(workflow_success_total[1m]))", "legendFormat": "completions/s" }
+        { "refId": "A", "expr": "sum(rate(service_requests{operation=\"StartWorkflowExecution\"}[1m]))", "legendFormat": "starts/s" },
+        { "refId": "B", "expr": "sum(rate(workflow_success[1m]))", "legendFormat": "completions/s" }
       ]
     },
 

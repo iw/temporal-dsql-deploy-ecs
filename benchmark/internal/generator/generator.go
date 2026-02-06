@@ -89,6 +89,9 @@ type generator struct {
 	maxInflight int64
 	inflight    *semaphore.Weighted
 
+	// Fire-and-forget mode: submit without waiting for completion
+	fireAndForget bool
+
 	// Lifecycle
 	mu      sync.Mutex
 	running bool
@@ -113,6 +116,15 @@ func WithCompletionCallback(cb CompletionCallback) GeneratorOption {
 func WithMaxInflight(max int64) GeneratorOption {
 	return func(g *generator) {
 		g.maxInflight = max
+	}
+}
+
+// WithFireAndForget enables fire-and-forget mode where workflows are started
+// but not waited on. This decouples submission rate from completion rate,
+// allowing the generator to push higher st/s without being bottlenecked by matching.
+func WithFireAndForget(enabled bool) GeneratorOption {
+	return func(g *generator) {
+		g.fireAndForget = enabled
 	}
 }
 
@@ -158,7 +170,8 @@ func (g *generator) Start(ctx context.Context) error {
 		"target_rate", g.targetRate,
 		"duration", g.cfg.Duration,
 		"ramp_up", g.cfg.RampUpDuration,
-		"max_inflight", g.maxInflight)
+		"max_inflight", g.maxInflight,
+		"fire_and_forget", g.fireAndForget)
 
 	go g.runGenerator(ctx)
 
@@ -262,16 +275,22 @@ func (g *generator) runGenerator(ctx context.Context) {
 			// Start workflow with unique ID: <type>-<runID>-<counter>
 			workflowID := fmt.Sprintf("%s-%s-%d", g.cfg.WorkflowType, runID, workflowCounter.Add(1))
 
-			// Acquire semaphore slot for backpressure control
-			// This blocks if we have too many in-flight workflows
-			if err := g.inflight.Acquire(ctx, 1); err != nil {
-				// Context cancelled
-				slog.Info("Generator stopping: semaphore acquire cancelled")
-				return
-			}
+			if g.fireAndForget {
+				// Fire-and-forget: start workflow without waiting, no backpressure
+				g.wg.Add(1)
+				go g.startWorkflowFireAndForget(ctx, workflowID)
+			} else {
+				// Normal mode: acquire semaphore slot for backpressure control
+				// This blocks if we have too many in-flight workflows
+				if err := g.inflight.Acquire(ctx, 1); err != nil {
+					// Context cancelled
+					slog.Info("Generator stopping: semaphore acquire cancelled")
+					return
+				}
 
-			g.wg.Add(1)
-			go g.startWorkflow(ctx, workflowID)
+				g.wg.Add(1)
+				go g.startWorkflow(ctx, workflowID)
+			}
 		}
 	}
 }
@@ -379,6 +398,46 @@ func (g *generator) startWorkflow(ctx context.Context, workflowID string) {
 	if g.onComplete != nil {
 		g.onComplete(workflowID, duration, nil)
 	}
+}
+
+// startWorkflowFireAndForget starts a workflow without waiting for completion.
+// It only tracks whether the start RPC succeeded. Completion is tracked via
+// server-side metrics (state_transition_count) and visibility queries.
+func (g *generator) startWorkflowFireAndForget(ctx context.Context, workflowID string) {
+	defer g.wg.Done()
+
+	g.stats.incStarted()
+
+	opts := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: g.taskQueue,
+	}
+
+	var err error
+	switch g.cfg.WorkflowType {
+	case config.WorkflowTypeSimple:
+		_, err = g.client.ExecuteWorkflow(ctx, opts, workflows.SimpleWorkflowName)
+	case config.WorkflowTypeMultiActivity:
+		_, err = g.client.ExecuteWorkflow(ctx, opts, workflows.MultiActivityWorkflowName)
+	case config.WorkflowTypeStateTransitions:
+		_, err = g.client.ExecuteWorkflow(ctx, opts, workflows.StateTransitionWorkflowName)
+	case config.WorkflowTypeTimer:
+		_, err = g.client.ExecuteWorkflow(ctx, opts, workflows.TimerWorkflowName, g.cfg.TimerDuration)
+	case config.WorkflowTypeChildWorkflow:
+		_, err = g.client.ExecuteWorkflow(ctx, opts, workflows.ChildWorkflowName, g.cfg.ChildCount)
+	default:
+		err = fmt.Errorf("unknown workflow type: %s", g.cfg.WorkflowType)
+	}
+
+	if err != nil {
+		g.stats.incFailed()
+		slog.Error("Failed to start workflow", "workflow_id", workflowID, "error", err)
+		return
+	}
+
+	// Don't wait for completion — workflow is now in-flight on the server.
+	// State transitions are tracked via server-side metrics.
+	g.stats.incCompleted()
 }
 
 // LogActualRate logs the actual achieved rate if it differs from target.

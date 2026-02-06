@@ -58,6 +58,7 @@ COUNT=$DEFAULT_COUNT
 REGION=""
 CLUSTER_NAME=""
 SERVICE_NAME=""
+SC_NAMESPACE_ARN=""
 
 # Function to show usage
 show_usage() {
@@ -144,6 +145,9 @@ get_terraform_values() {
     # Get region from terraform output
     REGION=$(terraform output -raw region 2>/dev/null || echo "eu-west-1")
     
+    # Get Service Connect namespace ARN
+    SC_NAMESPACE_ARN=$(terraform output -raw service_connect_namespace_arn 2>/dev/null || echo "")
+    
     cd "$PROJECT_ROOT"
 }
 
@@ -175,13 +179,26 @@ scale_workers() {
     echo "Region:  $REGION"
     echo ""
     
-    aws ecs update-service \
-        --cluster "$CLUSTER_NAME" \
-        --service "$SERVICE_NAME" \
-        --desired-count "$count" \
-        --region "$REGION" \
-        --query 'service.{desired:desiredCount,status:status}' \
+    # Build update-service arguments
+    local UPDATE_ARGS=(
+        --cluster "$CLUSTER_NAME"
+        --service "$SERVICE_NAME"
+        --desired-count "$count"
+        --region "$REGION"
+        --query 'service.{desired:desiredCount,status:status}'
         --output table
+    )
+
+    # Add Service Connect configuration when scaling up
+    # Benchmark worker is client-only (consumes temporal-frontend, exposes nothing)
+    if [ "$count" -gt 0 ] && [ -n "$SC_NAMESPACE_ARN" ]; then
+        local SC_CONFIG="{\"enabled\":true,\"namespace\":\"${SC_NAMESPACE_ARN}\"}"
+        UPDATE_ARGS+=(--service-connect-configuration "$SC_CONFIG")
+        echo "Service Connect: enabled (client-only)"
+        echo ""
+    fi
+
+    aws ecs update-service "${UPDATE_ARGS[@]}"
     
     if [ "$count" -gt 0 ]; then
         echo ""
