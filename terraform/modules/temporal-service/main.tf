@@ -52,11 +52,15 @@ locals {
   # Container name
   container_name = local.service_name
 
-  # Sidecar resource allocation (init: 64 CPU, 128 MB + sidecar: 128 CPU, 256 MB)
-  sidecar_cpu    = 192
-  sidecar_memory = 384
+  # Sidecar resource allocation:
+  # - wait-for-frontend init: 32 CPU, 64 MB
+  # - alloy-config-init: 64 CPU, 128 MB  
+  # - alloy-collector sidecar: 128 CPU, 256 MB
+  # Total: 224 CPU, 448 MB (init containers still count toward task CPU limit)
+  sidecar_cpu    = 224
+  sidecar_memory = 448
 
-  # Main container resources (reserve space for sidecar)
+  # Main container resources (reserve space for sidecars)
   main_cpu    = var.cpu - local.sidecar_cpu
   main_memory = var.memory - local.sidecar_memory
 
@@ -143,22 +147,14 @@ locals {
   ], local.reservoir_env_vars, local.conn_lease_env_vars)
 
   # Wait-for-frontend init container (only for worker service)
+  # No logConfiguration - uses default Docker json-file driver so Alloy can read logs
   wait_for_frontend_container = {
     name      = "wait-for-frontend"
     image     = "public.ecr.aws/docker/library/busybox:latest"
     essential = false
-    cpu       = 64
+    cpu       = 32
     memory    = 64
     command   = ["sh", "-c", "echo 'Waiting for temporal-frontend:7233...'; until nc -z temporal-frontend 7233; do echo 'Frontend not ready, retrying in 2s...'; sleep 2; done; echo 'Frontend is ready!'"]
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        "awslogs-group"         = "/ecs/${var.project_name}/wait-for-frontend"
-        "awslogs-region"        = var.region
-        "awslogs-stream-prefix" = "worker"
-        "awslogs-create-group"  = "true"
-      }
-    }
   }
 
   # Main container definition (common to all services)

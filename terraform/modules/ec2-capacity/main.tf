@@ -52,6 +52,7 @@ resource "aws_launch_template" "ecs" {
     echo "ECS_CLUSTER=${var.cluster_name}" >> /etc/ecs/ecs.config
     echo "ECS_ENABLE_CONTAINER_METADATA=true" >> /etc/ecs/ecs.config
     echo "ECS_ENABLE_SPOT_INSTANCE_DRAINING=true" >> /etc/ecs/ecs.config
+    echo "ECS_IMAGE_PULL_BEHAVIOR=always" >> /etc/ecs/ecs.config
   EOF
   )
 

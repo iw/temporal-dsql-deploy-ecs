@@ -189,6 +189,13 @@ func run(ctx context.Context) error {
 	}
 
 	slog.Info("Benchmark runner completed")
+
+	// Sleep indefinitely to prevent ECS from restarting the service.
+	// The generator runs as an ECS service, so exiting would cause a restart.
+	// Instead, we sleep until manually stopped or the service is scaled down.
+	slog.Info("Generator sleeping indefinitely - scale down or delete service to stop")
+	<-ctx.Done()
+	slog.Info("Generator received shutdown signal")
 	return nil
 }
 
@@ -199,6 +206,24 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, _ client.Cli
 	if namespace == "" {
 		namespace = "benchmark"
 	}
+
+	// CRITICAL: Disable sticky workflow cache at package level.
+	// This must be called BEFORE creating any workers.
+	//
+	// Why this matters for high-throughput benchmarks:
+	// - StickyScheduleToStartTimeout: 0 does NOT disable sticky execution
+	// - It only means "immediately fall back if sticky worker unavailable"
+	// - The SDK still creates sticky pollers and uses sticky when possible
+	// - With 30 workers × 16 pollers = 480 total, half go to sticky queues
+	// - This starves the non-sticky queue where ALL new work arrives
+	//
+	// By setting cache size to 0:
+	// - No sticky pollers are created
+	// - ALL pollers serve the non-sticky queue
+	// - Any worker can process any workflow task
+	// - Eliminates sticky/non-sticky queue contention
+	worker.SetStickyWorkflowCacheSize(0)
+	slog.Info("Sticky workflow cache disabled (cache size = 0)")
 
 	slog.Info("Starting worker-only mode",
 		"namespace", namespace,
@@ -231,36 +256,32 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, _ client.Cli
 	// Create worker optimized for high-throughput benchmarks
 	//
 	// Key optimizations based on 400 WPS benchmark investigation:
-	// 1. Sticky execution DISABLED - eliminates sticky/non-sticky queue contention
-	// 2. Poller autoscaling - SDK dynamically adjusts pollers based on load
-	// 3. Reduced activity pollers - eager activities bypass activity queue
+	// 1. Sticky execution DISABLED via SetStickyWorkflowCacheSize(0) above
+	// 2. Fixed pollers (no autoscaling) - predictable behavior for benchmarking
+	// 3. Minimal activity pollers - eager activities bypass activity queue
 	//
 	// For short-lived workflows like state-transitions (~1s duration), sticky caching
-	// provides minimal benefit but creates queue contention. Disabling sticky means
-	// ALL workflow tasks go to the non-sticky queue, which any worker can process.
+	// provides minimal benefit but creates queue contention. With cache size = 0,
+	// ALL workflow task pollers serve the non-sticky queue.
 	workerOptions := worker.Options{
-		// Execution slots - high for throughput
-		MaxConcurrentWorkflowTaskExecutionSize:  200,
-		MaxConcurrentActivityExecutionSize:      50, // Reduced - eager activities don't need many
-		MaxConcurrentLocalActivityExecutionSize: 200,
+		// Throughput-oriented but not crazy for 4 vCPU
+		MaxConcurrentWorkflowTaskExecutionSize: 100,
 
-		// Poller autoscaling (SDK v1.39.0+) - dynamically adjusts based on load
-		WorkflowTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
-			InitialNumberOfPollers: 4,  // Start low
-			MaximumNumberOfPollers: 32, // Scale up to 32 if needed
-		}),
-		ActivityTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
-			InitialNumberOfPollers: 2, // Start very low - eager activities bypass queue
-			MaximumNumberOfPollers: 8, // Max 8 - most activities are eager
-		}),
+		// Eager activities => very few activity tasks should be polled from matching
+		MaxConcurrentActivityExecutionSize: 10,
+		MaxConcurrentActivityTaskPollers:   1,
 
-		// Eager execution - enabled for latency optimization
+		// Local activities only if you actually use them; otherwise keep low
+		MaxConcurrentLocalActivityExecutionSize: 50,
+
+		// ALL 16 pollers now serve non-sticky queue (sticky disabled above)
+		MaxConcurrentWorkflowTaskPollers: 16,
+
+		// Eager execution: this is where activity concurrency matters
 		DisableEagerActivities:                  false,
 		MaxConcurrentEagerActivityExecutionSize: 100,
 
-		// Sticky execution effectively DISABLED by setting timeout to 0
-		// All workflow tasks go to non-sticky queue, eliminating contention
-		StickyScheduleToStartTimeout: 0,
+		// Note: StickyScheduleToStartTimeout is irrelevant when cache size = 0
 	}
 
 	w := worker.New(nsClient, runner.DefaultTaskQueue, workerOptions)
@@ -270,12 +291,11 @@ func runWorkerOnly(ctx context.Context, cfg config.BenchmarkConfig, _ client.Cli
 	if err := w.Start(); err != nil {
 		return fmt.Errorf("failed to start worker: %w", err)
 	}
-	slog.Info("Worker started with sticky disabled",
-		"workflow_pollers_initial", 4,
-		"workflow_pollers_max", 32,
-		"activity_pollers_initial", 2,
-		"activity_pollers_max", 8,
-		"sticky_execution", false,
+	slog.Info("Worker started",
+		"sticky_cache_size", 0,
+		"workflow_task_pollers", 16,
+		"activity_task_pollers", 1,
+		"eager_activities", true,
 	)
 
 	// Wait for shutdown signal

@@ -253,6 +253,7 @@ docker buildx build \
     --file targets/server.Dockerfile \
     --tag "${ECR_REPO_URL}:latest" \
     --tag "${ECR_REPO_URL}:${VERSION_TAG}" \
+    --no-cache \
     --push \
     .
 
@@ -281,6 +282,7 @@ docker buildx build \
     --file targets/admin-tools.Dockerfile \
     --tag "${ADMIN_TOOLS_REPO_URL}:latest" \
     --tag "${ADMIN_TOOLS_REPO_URL}:${VERSION_TAG}" \
+    --no-cache \
     --push \
     .
 
@@ -335,6 +337,7 @@ docker buildx build \
     --file runtime.Dockerfile \
     --tag "${RUNTIME_REPO_URL}:latest" \
     --tag "${RUNTIME_REPO_URL}:${VERSION_TAG}" \
+    --no-cache \
     --push \
     .
 

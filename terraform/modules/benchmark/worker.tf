@@ -54,15 +54,21 @@ resource "aws_ecs_task_definition" "benchmark_worker" {
         name      = "wait-for-frontend"
         image     = "public.ecr.aws/docker/library/busybox:latest"
         essential = false
+        cpu       = 32
+        memory    = 64
         command   = ["sh", "-c", "echo Waiting for temporal-frontend:7233...; until nc -z temporal-frontend 7233; do echo Frontend not ready, retrying in 2s...; sleep 2; done; echo Frontend is ready!"]
       },
       {
         name      = "benchmark-worker"
         image     = var.benchmark_image != "" ? var.benchmark_image : "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal"
         essential = true
-        # Reserve CPU/memory for Alloy sidecar when enabled (init: 64 CPU, 128 MB + sidecar: 128 CPU, 256 MB = 192 CPU, 384 MB)
-        cpu    = var.alloy_worker_sidecar_container != null ? var.worker_cpu - 192 : var.worker_cpu
-        memory = var.alloy_worker_sidecar_container != null ? var.worker_memory - 384 : var.worker_memory
+        # Reserve CPU/memory for Alloy sidecar when enabled:
+        # - wait-for-frontend init: 32 CPU, 64 MB
+        # - alloy-config-init: 64 CPU, 128 MB
+        # - alloy-collector sidecar: 128 CPU, 256 MB
+        # Total sidecar overhead: 224 CPU, 448 MB
+        cpu    = var.alloy_worker_sidecar_container != null ? var.worker_cpu - 224 : var.worker_cpu
+        memory = var.alloy_worker_sidecar_container != null ? var.worker_memory - 448 : var.worker_memory
 
         # Wait for frontend to be reachable before starting
         dependsOn = [

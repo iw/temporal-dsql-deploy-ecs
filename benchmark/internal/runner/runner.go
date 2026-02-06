@@ -43,7 +43,8 @@ type BenchmarkRunner interface {
 const NamespacePrefix = "benchmark-"
 
 // DefaultTaskQueue is the default task queue for benchmark workflows.
-const DefaultTaskQueue = "benchmark-task-queue"
+// Changed to force new partition configuration (16 partitions instead of 64)
+const DefaultTaskQueue = "benchmark-tq-v2"
 
 // MetricsPort is the port for the Prometheus metrics endpoint.
 // Requirement 3.1.1: THE Benchmark_Runner SHALL expose Temporal SDK metrics on a Prometheus endpoint (port 9090)
@@ -196,35 +197,16 @@ func (r *runner) runSingleIteration(ctx context.Context, cfg config.BenchmarkCon
 	var w worker.Worker
 	if !cfg.GeneratorOnly {
 		// Create a worker to process workflows in the benchmark namespace
-		// Optimized for high-throughput benchmarking with eager activities
-		//
-		// Key optimizations based on 400 WPS benchmark investigation:
-		// 1. Sticky execution DISABLED - eliminates sticky/non-sticky queue contention
-		// 2. Poller autoscaling - SDK dynamically adjusts pollers based on load
-		// 3. Reduced activity pollers - eager activities bypass activity queue
+		// Same config as dedicated workers but lower limits for embedded use
 		workerOptions := worker.Options{
-			// Execution slots - high for throughput
-			MaxConcurrentWorkflowTaskExecutionSize:  200,
-			MaxConcurrentActivityExecutionSize:      50, // Reduced - eager activities don't need many
-			MaxConcurrentLocalActivityExecutionSize: 200,
-
-			// Poller autoscaling (SDK v1.39.0+) - dynamically adjusts based on load
-			WorkflowTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
-				InitialNumberOfPollers: 2,  // Start low
-				MaximumNumberOfPollers: 16, // Scale up to 16 if needed
-			}),
-			ActivityTaskPollerBehavior: worker.NewPollerBehaviorAutoscaling(worker.PollerBehaviorAutoscalingOptions{
-				InitialNumberOfPollers: 1, // Start very low - eager activities bypass queue
-				MaximumNumberOfPollers: 4, // Max 4 - most activities are eager
-			}),
-
-			// Eager activity execution - reduces latency by executing locally
+			MaxConcurrentWorkflowTaskExecutionSize:  50,
+			MaxConcurrentActivityExecutionSize:      10,
+			MaxConcurrentActivityTaskPollers:        1,
+			MaxConcurrentLocalActivityExecutionSize: 25,
+			MaxConcurrentWorkflowTaskPollers:        8,
 			DisableEagerActivities:                  false,
-			MaxConcurrentEagerActivityExecutionSize: 100,
-
-			// Sticky execution effectively DISABLED by setting timeout to 0
-			// All workflow tasks go to non-sticky queue, eliminating contention
-			StickyScheduleToStartTimeout: 0,
+			MaxConcurrentEagerActivityExecutionSize: 50,
+			StickyScheduleToStartTimeout:            0,
 		}
 
 		w = worker.New(nsClient, DefaultTaskQueue, workerOptions)

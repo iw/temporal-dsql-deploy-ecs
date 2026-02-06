@@ -1,24 +1,37 @@
 # Dynamic configuration for Aurora DSQL - Bench Environment
 # Infrastructure: 10 × m8g.4xlarge EC2, 4096 shards, 3-node OpenSearch
 # Target: WPS 200-400
+#
+# VALIDATED: All keys verified against temporal-dsql/common/dynamicconfig/constants.go
 
 # =============================================================================
-# Eager Execution Settings
+# System Settings
 # =============================================================================
 
 system.enableActivityEagerExecution:
   - value: true
     constraints: {}
 
-# =============================================================================
-# DSQL-Specific Settings
-# =============================================================================
-
-persistence.enableDSQLMode:
+system.enableNamespaceNotActiveAutoForwarding:
   - value: true
     constraints: {}
 
-# DSQL QPS - maximized for benchmark workloads
+system.enableNexus:
+  - value: false
+    constraints: {}
+
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+system.transactionSizeLimit:
+  - value: 4000000
+    constraints: {}
+
+# =============================================================================
+# Persistence Settings
+# =============================================================================
+
 history.persistenceMaxQPS:
   - value: 15000
     constraints: {}
@@ -31,51 +44,9 @@ frontend.persistenceMaxQPS:
   - value: 15000
     constraints: {}
 
-# DSQL transaction size limit (4MB)
-persistence.transactionSizeLimit:
-  - value: 4000000
-    constraints: {}
-
-persistence.healthCheckInterval:
-  - value: 30s
-    constraints: {}
-
-# =============================================================================
-# Advanced Visibility (OpenSearch) Settings
-# =============================================================================
-
-system.advancedVisibilityWritingMode:
-  - value: "on"
-    constraints: {}
-
-system.enableReadFromClosedExecutionV2:
-  - value: true
-    constraints: {}
-
-system.enableReadVisibilityFromES:
-  - value: true
-    constraints: {}
-
-visibility.maxPageSize:
-  - value: 1000
-    constraints: {}
-
-system.forceSearchAttributesCacheRefreshOnRead:
-  - value: true
-    constraints: {}
-
-system.enableLogCustomerQueryParameter:
-  - value: true
-    constraints: {}
-
 # =============================================================================
 # History Service Settings
 # =============================================================================
-
-# Higher buffer for high-throughput benchmarks
-history.maxBufferedQueryCount:
-  - value: 4000
-    constraints: {}
 
 history.timerProcessorMaxPollRPS:
   - value: 200
@@ -86,11 +57,23 @@ history.timerProcessorUpdateAckInterval:
     constraints: {}
 
 history.transferProcessorMaxPollRPS:
+  - value: 400
+    constraints: {}
+
+history.transferTaskBatchSize:
   - value: 200
     constraints: {}
 
-history.replicationTaskProcessorMaxPollRPS:
-  - value: 200
+history.rps:
+  - value: 10000
+    constraints: {}
+
+history.defaultActivityRetryPolicy:
+  - value:
+      InitialIntervalInSeconds: 1
+      MaximumIntervalInSeconds: 100
+      BackoffCoefficient: 2.0
+      MaximumAttempts: 0
     constraints: {}
 
 # =============================================================================
@@ -115,29 +98,30 @@ history.cacheNonUserContextLockTimeout:
   - value: 500ms
     constraints: {}
 
-history.historyShardControllerMaxConcurrentAcquires:
-  - value: 20
-    constraints: {}
-
-history.defaultActivityRetryPolicy:
-  - value:
-      InitialIntervalInSeconds: 1
-      MaximumIntervalInSeconds: 100
-      BackoffCoefficient: 2.0
-      MaximumAttempts: 0
-    constraints: {}
-
 # =============================================================================
 # Matching Service Settings (Tuned for high WPS)
 # =============================================================================
 
-# Task queue partitions - maximized for benchmark throughput
+matching.rps:
+  - value: 10000
+    constraints: {}
+
+# Task queue partitions - reduced from 16 to 8 to increase poller density
+# With 480 pollers / 8 partitions = ~60 pollers per partition
 matching.numTaskqueueWritePartitions:
-  - value: 64
+  - value: 8
+    constraints:
+      namespace: "benchmark"
+      taskQueueName: "benchmark-tq-v2"
+  - value: 8
     constraints: {}
 
 matching.numTaskqueueReadPartitions:
-  - value: 64
+  - value: 8
+    constraints:
+      namespace: "benchmark"
+      taskQueueName: "benchmark-tq-v2"
+  - value: 8
     constraints: {}
 
 matching.maxTaskBatchSize:
@@ -152,32 +136,24 @@ matching.longPollExpirationInterval:
   - value: 60s
     constraints: {}
 
-# Forwarder settings - maximized for benchmark
+# Forwarder settings - moderate values to avoid draining pollers from child partitions
+# With 8 partitions and good poller density, forwarding should be minimal
 matching.forwarderMaxOutstandingPolls:
-  - value: 80
+  - value: 20
     constraints: {}
 
 matching.forwarderMaxOutstandingTasks:
-  - value: 800
+  - value: 1000
     constraints: {}
 
 matching.forwarderMaxRatePerSecond:
-  - value: 800
-    constraints: {}
-
-matching.enableTaskInfoLogByDomainID:
-  - value: false
+  - value: 2000
     constraints: {}
 
 # =============================================================================
 # Frontend Service Settings
 # =============================================================================
 
-frontend.enableClientVersionCheck:
-  - value: true
-    constraints: {}
-
-# Rate limiting - maximized for benchmark (WPS 400)
 frontend.rps:
   - value: 30000
     constraints: {}
@@ -192,80 +168,4 @@ frontend.namespaceCount:
 
 frontend.visibilityMaxPageSize:
   - value: 1000
-    constraints: {}
-
-# =============================================================================
-# Worker Service Settings
-# =============================================================================
-
-worker.enableBatcher:
-  - value: true
-    constraints: {}
-
-worker.enableLogging:
-  - value: true
-    constraints: {}
-
-worker.scannerMaxConcurrentActivityExecutionSize:
-  - value: 20
-    constraints: {}
-
-worker.scannerMaxConcurrentWorkflowTaskExecutionSize:
-  - value: 20
-    constraints: {}
-
-# =============================================================================
-# Cluster Membership Settings
-# =============================================================================
-
-system.membershipMaxJoinDuration:
-  - value: 120s
-    constraints: {}
-
-# =============================================================================
-# System Settings
-# =============================================================================
-
-system.enableParentClosePolicy:
-  - value: true
-    constraints: {}
-
-system.enableNamespaceNotActiveAutoForwarding:
-  - value: true
-    constraints: {}
-
-system.enableLoggerRateLimiting:
-  - value: true
-    constraints: {}
-
-# =============================================================================
-# Archival Settings
-# =============================================================================
-
-archival.history.enableRead:
-  - value: true
-    constraints: {}
-
-archival.visibility.enableRead:
-  - value: true
-    constraints: {}
-
-# =============================================================================
-# Nexus Settings - DISABLED for DSQL compatibility
-# =============================================================================
-
-system.enableNexus:
-  - value: false
-    constraints: {}
-
-frontend.enableNexusAPIs:
-  - value: false
-    constraints: {}
-
-worker.enableNexus:
-  - value: false
-    constraints: {}
-
-system.nexusEndpointRegistryEnabled:
-  - value: false
     constraints: {}
